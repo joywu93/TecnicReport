@@ -65,7 +65,7 @@ def analyze_stock(symbol):
         curr_vol = volume.iloc[-1]
         
         # 條件 A (量能 > 3日均量 1.2 倍) & B (收盤 > 5日均價)
-        cond_A = (curr_vol > mv3.iloc[-1] * 1.2) and (mv3.iloc[-1] > mv5.iloc[-1])
+        cond_A = (curr_vol > mv3.iloc[-1] * 1.5) and (mv3.iloc[-1] > mv5.iloc[-1])
         cond_B = curr_price > ma5.iloc[-1]
         
         status = "觀察中"
@@ -117,3 +117,4 @@ if run_button:
                 st.success(f"已發送 {sent_count} 封突破通知。")
             else:
                 st.info("目前無符合條件之標的。")
+
