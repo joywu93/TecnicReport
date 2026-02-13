@@ -53,7 +53,7 @@ def analyze_stock(symbol):
         curr_vol = volume.iloc[-1]
         
         # 判斷邏輯 A & B
-        cond_A = (curr_vol > mv3.iloc[-1] * 1.2) and (mv3.iloc[-1] > mv5.iloc[-1])
+        cond_A = (curr_vol > mv3.iloc[-1] * 1.5) and (mv3.iloc[-1] > mv5.iloc[-1])
         cond_B = curr_price > ma5.iloc[-1]
         
         status = "觀察中"
@@ -98,5 +98,6 @@ if run_button:
                 st.success(f"掃判完成！已同步發送通知信至您與管理員的信箱。")
             else:
                 st.info("目前無標的符合突破條件，未發送郵件。")
+
 
 
