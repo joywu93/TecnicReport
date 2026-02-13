@@ -11,34 +11,32 @@ def send_email(sender, pwd, receiver, subject, body):
         msg['Subject'] = subject
         msg['From'] = sender
         msg['To'] = receiver
-        
-        # 使用 Gmail SMTP 伺服器
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, pwd)
             server.send_message(msg)
         return True
-    except Exception as e:
-        st.error(f"Email 發送失敗: {e}")
+    except:
         return False
 
 st.set_page_config(page_title="股市監控 Email 版", layout="wide")
 st.title("📈 股市短線突破 & Email 通知系統")
 
+# 優先嘗試從後台 Secrets 讀取密碼，若無則留空
+default_user = st.secrets.get("GMAIL_USER", "joy****@gmail.com")
+default_pwd = st.secrets.get("GMAIL_PASSWORD", "")
+
 # 側邊欄：通知設定
 st.sidebar.header("📧 通知設定")
-my_gmail = st.sidebar.text_input("您的 Gmail 帳號", value="joy****@gmail.com")
-app_password = st.sidebar.text_input("應用程式密碼 (16位碼)", type="password")
-target_email = st.sidebar.text_input("接收通知的信箱 (預設同自己)")
-
-ticker_input = st.sidebar.text_area("自選股清單 (逗號隔開)", "2330.TW, 2317.TW, NVDA")
+my_gmail = st.sidebar.text_input("您的 Gmail 帳號", value=default_user)
+app_password = st.sidebar.text_input("應用程式密碼", value=default_pwd, type="password")
+# 預設自選股清單改在這裡修改
+ticker_input = st.sidebar.text_area("自選股清單", "2330.TW, 2317.TW, NVDA")
 run_button = st.sidebar.button("立即執行掃描")
 
-# 複用先前的分析邏輯
 def analyze_stock(symbol):
     try:
         df = yf.download(symbol, period="1y", progress=False)
         if df.empty: return None
-        
         close = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
         volume = df['Volume'].iloc[:, 0] if isinstance(df['Volume'], pd.DataFrame) else df['Volume']
         high = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
@@ -51,7 +49,7 @@ def analyze_stock(symbol):
         curr_price = close.iloc[-1]
         curr_vol = volume.iloc[-1]
         
-        # 條件 A & B
+        # 條件 A & B (買入邏輯)
         cond_A = (curr_vol > mv3.iloc[-1] * 1.5) and (mv3.iloc[-1] > mv5.iloc[-1])
         cond_B = curr_price > ma5.iloc[-1]
         
@@ -71,19 +69,23 @@ def analyze_stock(symbol):
 
 if run_button:
     if not app_password:
-        st.warning("請輸入應用程式密碼後再執行。")
+        st.warning("請輸入或在後台設定應用程式密碼。")
     else:
         tickers = [t.strip() for t in ticker_input.split(',')]
         results = []
-        receiver = target_email if target_email else my_gmail
+        sent_count = 0
         
         for t in tickers:
             res = analyze_stock(t)
             if res:
                 results.append(res)
                 if res["通知內容"]:
-                    send_email(my_gmail, app_password, receiver, f"股市突破通知: {res['代號']}", res["通知內容"])
+                    if send_email(my_gmail, app_password, my_gmail, f"股市突破通知: {res['代號']}", res["通知內容"]):
+                        sent_count += 1
         
         if results:
             st.table(pd.DataFrame(results).drop(columns=['通知內容']))
-            st.success(f"掃描完成！符合條件的標的已發信至 {receiver}")
+            if sent_count > 0:
+                st.success(f"掃描完成！已發送 {sent_count} 封突破通知信。")
+            else:
+                st.info("掃描完成，目前無標的符合突破條件，未發送郵件。")
