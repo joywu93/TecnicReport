@@ -117,4 +117,3 @@ if run_button:
                 st.success(f"已發送 {sent_count} 封突破通知。")
             else:
                 st.info("目前無符合條件之標的。")
-
