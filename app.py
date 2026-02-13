@@ -27,26 +27,25 @@ MY_PWD = st.secrets.get("GMAIL_PASSWORD", "")
 
 st.sidebar.header("👤 使用者設定")
 friend_email = st.sidebar.text_input("接收通知信箱", placeholder="請輸入您的 Email")
-ticker_input = st.sidebar.text_area("自選股清單 (輸入數字即可)", "2330, 2317, 6203, 3570, 4766, NVDA")
+ticker_input = st.sidebar.text_area("自選股清單 (輸入數字即可)", "2330, 2317, 6203, 3570, 4766")
 run_button = st.sidebar.button("立即執行掃描")
 
 def analyze_stock(symbol):
     try:
-        # 1. 自動補齊台灣股票後綴
+        # 1. 自動補齊台灣股票後綴 (.TW 或 .TWO)
         target_symbol = symbol.strip().upper()
-        if target_symbol.isdigit(): # 如果全是數字
-            # 先試上市 (.TW)
+        if target_symbol.isdigit():
             temp_stock = yf.download(f"{target_symbol}.TW", period="5d", progress=False)
             if not temp_stock.empty:
                 target_symbol = f"{target_symbol}.TW"
             else:
-                # 不行就試上櫃 (.TWO)
                 target_symbol = f"{target_symbol}.TWO"
 
         stock = yf.Ticker(target_symbol)
         df = stock.history(period="1y")
         if df.empty or len(df) < 60: return None
         
+        # 取得名稱 (yfinance 抓取名稱以英文為主)
         name = stock.info.get('shortName', target_symbol)
         
         close = df['Close']
@@ -54,25 +53,34 @@ def analyze_stock(symbol):
         high = df['High']
         
         # 指標計算
-        ma3, mv3 = close.rolling(3).mean(), volume.rolling(3).mean()
-        ma5, mv5 = close.rolling(5).mean(), volume.rolling(5).mean()
-        ma10, mv10 = close.rolling(10).mean(), volume.rolling(10).mean()
-        ma20 = close.rolling(20).mean()
-        ma60 = close.rolling(60).mean()
+        # 價格均線稱為 SMA
+        sma3 = close.rolling(3).mean()
+        sma5 = close.rolling(5).mean()
+        sma10 = close.rolling(10).mean()
+        sma20 = close.rolling(20).mean()
+        sma60 = close.rolling(60).mean()
+        
+        # 成交量均線稱為 MA
+        ma3 = volume.rolling(3).mean()
+        ma5 = volume.rolling(5).mean()
         high5 = high.rolling(5).max()
         
         curr_price = close.iloc[-1]
         curr_vol = volume.iloc[-1]
         
-        # 條件 A (量能 > 3日均量 1.2 倍) & B (收盤 > 5日均價)
-        cond_A = (curr_vol > mv3.iloc[-1] * 1.5) and (mv3.iloc[-1] > mv5.iloc[-1])
-        cond_B = curr_price > ma5.iloc[-1]
+        # 條件 A (當日量 > 3日均量 1.5 倍) & B (收盤 > 5SMA)
+        cond_A = (curr_vol > ma3.iloc[-1] * 1.5) and (ma3.iloc[-1] > ma5.iloc[-1])
+        cond_B = curr_price > sma5.iloc[-1]
         
         status = "觀察中"
         email_content = ""
         if cond_A and cond_B:
             status = "🚀 突破成功"
-            email_content = f"【突破通知】\n標的：{name} ({target_symbol})\n價格：{curr_price:.2f}\n原因：量能達標(>1.2倍)且站在均線上。"
+            # 更新通知訊息內容
+            email_content = (f"【突破通知】\n"
+                             f"標的：{name} ({target_symbol})\n"
+                             f"價格：{curr_price:.2f}\n"
+                             f"原因：量能達標(>1.5倍)且價突破5SMA，但注意未來3日的收盤價 > 5SMA。")
             
         warning = "✅ 正常"
         if curr_price < high5.iloc[-1]:
@@ -80,11 +88,11 @@ def analyze_stock(symbol):
 
         return {
             "代號": target_symbol,
-            "名稱": name[:10],
+            "公司名稱": name[:10],
             "現價": round(curr_price, 2),
-            "MA3/5/10": f"{ma3.iloc[-1]:.1f}/{ma5.iloc[-1]:.1f}/{ma10.iloc[-1]:.1f}",
-            "MA20/60": f"{ma20.iloc[-1]:.1f}/{ma60.iloc[-1]:.1f}",
-            "MV3/5/10(萬)": f"{mv3.iloc[-1]/10000:.1f}/{mv5.iloc[-1]/10000:.1f}/{mv10.iloc[-1]/10000:.1f}",
+            "SMA 3/5/10": f"{sma3.iloc[-1]:.1f}/{sma5.iloc[-1]:.1f}/{sma10.iloc[-1]:.1f}",
+            "SMA 20/60": f"{sma20.iloc[-1]:.1f}/{sma60.iloc[-1]:.1f}",
+            "MA 3/5(萬)": f"{ma3.iloc[-1]/10000:.1f}/{ma5.iloc[-1]/10000:.1f}",
             "狀態": status,
             "風險檢查": warning,
             "通知內容": email_content
@@ -98,7 +106,7 @@ if run_button:
     elif not friend_email:
         st.warning("請填寫接收通知的 Email。")
     else:
-        tickers = [t.strip() for t in ticker_input.split(',')]
+        tickers = [ticker.strip() for ticker in ticker_input.split(',')]
         results = []
         sent_count = 0
         receiver_list = [MY_GMAIL, friend_email]
@@ -112,6 +120,7 @@ if run_button:
                         sent_count += 1
         
         if results:
+            # 顯示表格並隱藏不需要的通知內容欄位
             st.dataframe(pd.DataFrame(results).drop(columns=['通知內容']), use_container_width=True)
             if sent_count > 0:
                 st.success(f"已發送 {sent_count} 封突破通知。")
