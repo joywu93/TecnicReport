@@ -26,7 +26,7 @@ st.title("📈 股市短線突破 & Email 通知系統")
 
 # 側邊欄：通知設定
 st.sidebar.header("📧 通知設定")
-my_gmail = st.sidebar.text_input("您的 Gmail 帳號", value="joy****@gmail.com")
+my_gmail = st.sidebar.text_input("您的 Gmail 帳號", value="joywu4093@gmail.com")
 app_password = st.sidebar.text_input("應用程式密碼 (16位碼)", type="password")
 target_email = st.sidebar.text_input("接收通知的信箱 (預設同自己)")
 
@@ -89,3 +89,4 @@ if run_button:
             st.success(f"掃描完成！符合條件的標的已發信至 {receiver}")
 
    
+
