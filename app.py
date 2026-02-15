@@ -4,12 +4,12 @@ import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 import time
+import re # 引入正規表示式模組，處理分隔符號
 
 # ==========================================
-# 🔧 使用者設定區 (請在此修改您的預設股票)
+# 🔧 使用者設定區 (預設自選股)
 # ==========================================
-# 這裡修改後，每次打開網頁都會自動出現這些股票，不用重打
-DEFAULT_TICKERS = "2330, 2317, 2451, 2344, 6203, 4766" 
+DEFAULT_TICKERS = "2330 2317, 2454; 2603, 6203 4766" 
 
 # --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
@@ -39,8 +39,8 @@ def send_email_batch(sender, pwd, receivers, subject, body):
         print(f"Error sending email: {e}")
         return False
 
-st.set_page_config(page_title="均線戰略監控系統", layout="wide")
-st.title("📈 股市均線戰略 & 轉折判讀系統")
+st.set_page_config(page_title="全方位戰略監控系統", layout="wide")
+st.title("📈 股市戰略轉折 & 自動容錯監控")
 
 # 後台 Secrets 讀取
 MY_GMAIL = st.secrets.get("GMAIL_USER", "")
@@ -48,13 +48,11 @@ MY_PWD = st.secrets.get("GMAIL_PASSWORD", "")
 
 st.sidebar.header("👤 使用者設定")
 friend_email = st.sidebar.text_input("接收通知信箱", placeholder="請輸入您的 Email")
-
-# 使用變數 DEFAULT_TICKERS 作為預設值，解決重複輸入問題
-ticker_input = st.sidebar.text_area("自選股清單 (修改後請按 Ctrl+Enter)", value=DEFAULT_TICKERS)
+ticker_input = st.sidebar.text_area("自選股清單 (支援逗號、分號、空白)", value=DEFAULT_TICKERS)
 run_button = st.sidebar.button("立即執行判讀")
 
 # --- 3. 核心判讀邏輯 ---
-def check_strategy(df, symbol):
+def check_strategy(df):
     # 提取數據
     close = df['Close']
     volume = df['Volume']
@@ -66,124 +64,127 @@ def check_strategy(df, symbol):
     prev_vol = volume.iloc[-2]
     pct_change = (curr_price - prev_price) / prev_price
     
-    # 計算均線 (Series)
+    # 計算均線
     s5 = close.rolling(5).mean()
     s10 = close.rolling(10).mean()
     s20 = close.rolling(20).mean()
-    s60 = close.rolling(60).mean()
-    s240 = close.rolling(240).mean()
-
+    s60 = close.rolling(60).mean() # 季線 (生命線)
+    
+    # 取得今日與昨日的 60SMA (用於判斷穿越)
+    v60 = s60.iloc[-1]
+    p60 = s60.iloc[-2]
+    
     # 取得今日數值
-    v5, v10, v20, v60, v240 = s5.iloc[-1], s10.iloc[-1], s20.iloc[-1], s60.iloc[-1], s240.iloc[-1]
-    # 取得昨日數值 (用於判斷下彎)
-    p5, p10, p20, p60 = s5.iloc[-2], s10.iloc[-2], s20.iloc[-2], s60.iloc[-2]
+    v5, v10, v20 = s5.iloc[-1], s10.iloc[-1], s20.iloc[-1]
+    # 取得昨日數值 (判斷斜率)
+    p5, p10, p20 = s5.iloc[-2], s10.iloc[-2], s20.iloc[-2]
 
-    # === 關鍵：判斷均線趨勢 (True=向上, False=向下) ===
+    # === 1. 均線趨勢判斷 (True=向上) ===
     trend_up = {
-        5: v5 > p5,
-        10: v10 > p10,
-        20: v20 > p20,
-        60: v60 > p60
+        5: v5 > p5, 10: v10 > p10, 20: v20 > p20, 60: v60 > p60
     }
-    # 計算向下彎的均線數量
-    down_count = sum([not trend_up[5], not trend_up[10], not trend_up[20], not trend_up[60]])
+    # 計算向上與向下彎的均線數量
+    up_count = sum([trend_up[5], trend_up[10], trend_up[20], trend_up[60]])
+    down_count = 4 - up_count
     
-    # 計算位階 (60日高低)
-    high_60 = close.rolling(60).max().iloc[-1]
-    low_60 = close.rolling(60).min().iloc[-1]
-    
-    # 計算近3日高低 (判斷突破/跌破)
-    high_3days = close.iloc[-4:-1].max()
-    low_3days = close.iloc[-4:-1].min()
-
     status = []
     need_notify = False
     
-    # --- A. 位階與均線趨勢判讀 (解決 Issue 2) ---
-    position_msg = ""
-    
-    # 1. 高檔震盪區 (接近60日高點 OR 在60SMA之上)
-    if curr_price > v60:
-        if curr_price >= high_60 * 0.98:
-            position_msg = "🏰 高檔震盪"
+    # --- A. 60SMA 多空轉折 (Requirement 3) ---
+    # 1. 跌破 60SMA (轉空訊號)
+    if prev_price > p60 and curr_price < v60:
+        msg = f"📉 轉空警示：跌破季線(60SMA)"
+        note = "⚠️ 關鍵：短中多轉空，整理時間恐拉長"
+        status.append(msg)
+        status.append(note)
+        need_notify = True
+        
+    # 2. 站上 60SMA (轉多訊號)
+    elif prev_price < p60 and curr_price > v60:
+        msg = f"🚀 轉多訊號：站上季線(60SMA)"
+        note = "✅ 關鍵：短中空轉多，波段轉強"
+        status.append(msg)
+        status.append(note)
+        need_notify = True
+
+    # --- B. 低檔強勢反彈 (Requirement 2) ---
+    # 條件：漲幅 > 4% 且 量 > 1.5倍 (不論是否過高，只要低檔出量就通知)
+    # 這裡判斷「非高檔」即可 (例如價格 < 60SMA 或 剛站上)
+    is_rebound = pct_change >= 0.04 and curr_vol > prev_vol * 1.5
+    if is_rebound:
+        status.append("🔥 強勢反彈 (漲>4%且爆量1.5倍)")
+        need_notify = True
+
+    # --- C. 底部出現向上轉折 (2條或3條均線向上) ---
+    if up_count >= 2:
+        if up_count >= 3:
+            msg = f"✨ 強力轉折：3條均線同時向上"
         else:
-            position_msg = "🌊 波段多方"
+            msg = f"✨ 底部轉折：2條均線開始翻揚"
+        status.append(msg)
+        # 低檔轉折強制通知
+        if curr_price <= v60 * 1.1: 
+            need_notify = True 
 
-        # **均線下彎偵測邏輯**
-        if down_count >= 3:
-            # 3條以上均線下彎 (如 2451)
-            msg = f"📉 空方持續修正：{down_count}條均線下彎，高檔壓力大"
-            status.append(msg)
-            need_notify = True
-        elif down_count == 2:
-            # 2條均線下彎 (如 2344)
-            msg = "☁️ 高檔震盪整理：2條均線下彎，留意支撐"
-            status.append(msg)
-            # 若想讓2條下彎也通知，可設為 True，目前設為 False 僅顯示
-            # need_notify = True 
-        elif down_count <= 1:
-            status.append("✅ 多方趨勢行進中")
-
-    # 2. 低檔整理區
-    elif curr_price <= v60:
-        if curr_price <= low_60 * 1.02:
-            position_msg = "💧 低檔整理"
-        else:
-            position_msg = "❄️ 波段空方"
-            
-        # 低檔轉強偵測
-        if down_count <= 1: # 均線大多翻揚
-            status.append("✨ 底部翻揚：均線開始向上")
-
-    status.append(position_msg)
-
-    # --- B. 量價強勢訊號 (維持前版邏輯) ---
-    # 底部爆量長紅
-    if curr_vol > prev_vol * 1.5 and pct_change >= 0.04:
-        status.append("🚀 短期底部訊號 (爆量長紅)")
-        status.append("⚠️ 關鍵：未來3日需守住今日低點")
+    # --- D. 其他量價異常警示 ---
+    # 1. 爆量長黑
+    if curr_vol > prev_vol * 1.5 and pct_change < 0:
+        status.append("⚠️ 出貨警訊 (爆量收黑)")
+        need_notify = True
+        
+    # 2. 量價背離 (量增價弱)
+    if curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
+        status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
         need_notify = True
 
-    # 量價背離 (高檔出量不漲 / 低檔量增價跌)
-    elif curr_vol > prev_vol * 1.2:
-        if curr_price < v5: # 出量但破5日線
-            status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
-            need_notify = True
-
-    # 強勢反轉 (漲跌幅 > 6%)
-    if pct_change >= 0.06 and curr_price > high_3days:
-        status.append("🔥 強勢反轉 (漲>6%過前高)")
-        need_notify = True
-    elif pct_change <= -0.06 and curr_price < low_3days:
-        status.append("📉 長黑破線 (跌>6%破前低)")
-        need_notify = True
-
-    return status, need_notify, curr_price, position_msg, down_count
+    return status, need_notify, curr_price, up_count, down_count, v60
 
 def analyze_stock(symbol):
     try:
+        # === 智慧輸入處理 (Requirement 1) ===
+        # 移除空白與特殊字元，轉大寫
         pure_code = symbol.strip().upper()
+        if not pure_code: return None # 跳過空字串
+
         target_symbol = pure_code
         if pure_code.isdigit():
-            temp_stock = yf.download(f"{pure_code}.TW", period="5d", progress=False)
-            target_symbol = f"{pure_code}.TW" if not temp_stock.empty else f"{pure_code}.TWO"
+            # 優先嘗試 .TW，失敗才試 .TWO
+            try:
+                # 這裡只抓1天資料做快速測試，避免大量下載卡住
+                test_stock = yf.Ticker(f"{pure_code}.TW")
+                # 檢查是否有數據 (info 或 history)
+                if test_stock.history(period="1d").empty:
+                    target_symbol = f"{pure_code}.TWO"
+                else:
+                    target_symbol = f"{pure_code}.TW"
+            except:
+                target_symbol = f"{pure_code}.TWO"
 
         stock = yf.Ticker(target_symbol)
         df = stock.history(period="1y")
-        if len(df) < 60: return None
+        
+        # 資料不足防呆
+        if df.empty or len(df) < 60: 
+            return {
+                "代號": symbol,
+                "公司名稱": "資料不足/錯誤代號",
+                "現價": 0,
+                "狀態": "❌ 無法讀取",
+                "需要通知": False,
+                "回報文字": ""
+            }
         
         ch_name = STOCK_NAMES.get(pure_code, stock.info.get('shortName', target_symbol))
         
         # 呼叫判讀
-        status_list, need_notify, price, pos_msg, down_cnt = check_strategy(df, target_symbol)
+        status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
         
         status_text = " | ".join(status_list)
         
         report_text = ""
         if need_notify:
             report_text = (f"【{ch_name} ({target_symbol})】\n"
-                           f"現價: {price:.2f} ({pos_msg})\n"
-                           f"均線狀態: {down_cnt}條下彎\n"
+                           f"現價: {price:.2f} (季線: {v60:.1f})\n"
                            f"訊號: {status_text}\n"
                            f"------------------------------\n")
 
@@ -191,14 +192,14 @@ def analyze_stock(symbol):
             "代號": target_symbol,
             "公司名稱": ch_name,
             "現價": round(price, 2),
-            "均線下彎數": f"{down_cnt} 條", # 新增欄位方便觀察
-            "位階": pos_msg,
+            "均線狀態": f"⬆️{up_cnt} / ⬇️{down_cnt}",
             "戰略訊號": status_text,
             "需要通知": need_notify,
             "回報文字": report_text
         }
     except Exception as e:
-        print(f"Error: {e}")
+        # 全域防呆，避免單一個股錯誤卡死整個迴圈
+        print(f"Error processing {symbol}: {e}")
         return None
 
 if run_button:
@@ -207,20 +208,24 @@ if run_button:
     elif not friend_email:
         st.warning("請填寫接收通知的 Email。")
     else:
-        with st.spinner('正在分析均線趨勢與量價結構...'):
-            tickers = [t.strip() for t in ticker_input.split(',')]
+        with st.spinner('正在進行戰略掃描 (含容錯處理)...'):
+            # === 智慧分割輸入字串 (Requirement 1) ===
+            # 使用正規表示式，支援逗號(,)、分號(;)、空白(\s) 作為分隔符
+            raw_tickers = re.split(r'[,\s;]+', ticker_input)
+            # 過濾掉空字串
+            tickers = [t for t in raw_tickers if t]
+            
             results = []
             notify_list = []
             
             for t in tickers:
                 res = analyze_stock(t)
-                if res:
+                if res and res["現價"] > 0: # 排除錯誤代號
                     results.append(res)
                     if res["需要通知"]:
                         notify_list.append(res["回報文字"])
             
             if results:
-                # 顯示表格
                 st.dataframe(pd.DataFrame(results).drop(columns=['需要通知', '回報文字']), use_container_width=True)
                 
                 if notify_list:
@@ -230,9 +235,11 @@ if run_button:
                     
                     for i, chunk in enumerate(chunks):
                         mail_body = f"【股市戰略報告 - Part {i+1}】\n\n" + "".join(chunk)
-                        send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"均線戰略訊號 ({i+1})", mail_body)
+                        send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"多空轉折與強勢反彈 ({i+1})", mail_body)
                         time.sleep(1)
                         
                     st.success(f"判讀完成！已發送 {len(notify_list)} 則重要訊號。")
                 else:
-                    st.info("目前持股走勢穩健，無須發送警示。")
+                    st.info("目前持股走勢平穩，無特殊轉折訊號。")
+            else:
+                st.warning("未找到有效股票，請檢查代號輸入。")
