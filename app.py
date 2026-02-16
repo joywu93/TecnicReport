@@ -3,13 +3,20 @@ import yfinance as yf
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
+import time
 import re
 import random
+import requests
 
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 超級團購版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 終極穩定版", layout="wide")
+
+# 偽裝瀏覽器標頭
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
 
 # --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
@@ -39,134 +46,102 @@ def send_email_batch(sender, pwd, receivers, subject, body):
 
 # --- 3. 核心判讀邏輯 ---
 def check_strategy(df):
-    # 確保資料是 Series (單一股票)
-    try:
-        close = df['Close']
-        volume = df['Volume']
-        
-        # 移除 NaN
-        close = close.dropna()
-        volume = volume.dropna()
-        
-        if len(close) < 60: return [], False, 0, 0, 0, 0
+    if len(df) < 60: return [], False, 0, 0, 0, 0
 
-        curr_price = close.iloc[-1]
-        prev_price = close.iloc[-2]
-        curr_vol = volume.iloc[-1]
-        prev_vol = volume.iloc[-2]
-        pct_change = (curr_price - prev_price) / prev_price if prev_price != 0 else 0
-        
-        price_4_days_ago = close.iloc[-5] 
-        s3 = close.rolling(3).mean()
-        s5 = close.rolling(5).mean()
-        s10 = close.rolling(10).mean()
-        s20 = close.rolling(20).mean()
-        s60 = close.rolling(60).mean() 
-        
-        v60 = s60.iloc[-1]
-        p60 = s60.iloc[-2]
-        v5, v3 = s5.iloc[-1], s3.iloc[-1]
+    close = df['Close']
+    volume = df['Volume']
+    curr_price = close.iloc[-1]
+    prev_price = close.iloc[-2]
+    curr_vol = volume.iloc[-1]
+    prev_vol = volume.iloc[-2]
+    pct_change = (curr_price - prev_price) / prev_price if prev_price != 0 else 0
+    
+    price_4_days_ago = close.iloc[-5] 
+    s3 = close.rolling(3).mean()
+    s5 = close.rolling(5).mean()
+    s10 = close.rolling(10).mean()
+    s20 = close.rolling(20).mean()
+    s60 = close.rolling(60).mean() 
+    
+    v60 = s60.iloc[-1]
+    p60 = s60.iloc[-2]
+    v5, v3 = s5.iloc[-1], s3.iloc[-1]
 
-        trend_up = {5: v5 > s5.iloc[-2], 10: s10.iloc[-1] > s10.iloc[-2], 20: s20.iloc[-1] > s20.iloc[-2], 60: v60 > p60}
-        up_count = sum(trend_up.values())
-        down_count = 4 - up_count
+    trend_up = {5: v5 > s5.iloc[-2], 10: s10.iloc[-1] > s10.iloc[-2], 20: s20.iloc[-1] > s20.iloc[-2], 60: v60 > p60}
+    up_count = sum(trend_up.values())
+    down_count = 4 - up_count
+    
+    status = []
+    need_notify = False
+    
+    if prev_price > p60 and curr_price < v60:
+        status.append("📉 轉空警示：跌破季線")
+        need_notify = True
+    elif prev_price < p60 and curr_price > v60:
+        status.append("🚀 轉多訊號：站上季線")
+        need_notify = True
+    if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > v3:
+        status.append("🔥 強勢反彈 (漲>4%, 爆量, 站上3SMA)")
+        need_notify = True
+    if up_count >= 2 and curr_price <= v60 * 1.1:
+        status.append(f"✨ 底部轉折：{up_count}條均線翻揚")
+        need_notify = True
+    cond_sell_a = (curr_vol > prev_vol * 1.3 and pct_change < 0)
+    cond_sell_b = (curr_price < price_4_days_ago)
+    if cond_sell_a or cond_sell_b:
+        reasons = []
+        if cond_sell_a: reasons.append("爆量收黑")
+        if cond_sell_b: reasons.append("跌破4日價")
+        status.append(f"⚠️ 出貨警訊 ({'+'.join(reasons)})")
+        need_notify = True
+    if curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
+        status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
+        need_notify = True
         
-        status = []
-        need_notify = False
-        
-        # 策略
-        if prev_price > p60 and curr_price < v60:
-            status.append("📉 轉空警示：跌破季線")
-            need_notify = True
-        elif prev_price < p60 and curr_price > v60:
-            status.append("🚀 轉多訊號：站上季線")
-            need_notify = True
-        if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > v3:
-            status.append("🔥 強勢反彈 (漲>4%, 爆量, 站上3SMA)")
-            need_notify = True
-        if up_count >= 2 and curr_price <= v60 * 1.1:
-            status.append(f"✨ 底部轉折：{up_count}條均線翻揚")
-            need_notify = True
-        cond_sell_a = (curr_vol > prev_vol * 1.3 and pct_change < 0)
-        cond_sell_b = (curr_price < price_4_days_ago)
-        if cond_sell_a or cond_sell_b:
-            reasons = []
-            if cond_sell_a: reasons.append("爆量收黑")
-            if cond_sell_b: reasons.append("跌破4日價")
-            status.append(f"⚠️ 出貨警訊 ({'+'.join(reasons)})")
-            need_notify = True
-        if curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
-            status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
-            need_notify = True
+    dist_240 = abs(curr_price - s60.iloc[-1]) / s60.iloc[-1]
+    if dist_240 < 0.05 and down_count >= 3:
+        status.append("⚠️ 年線保衛戰：均線偏弱")
+        need_notify = True 
+    elif curr_price < v60 and down_count >= 3:
+        status.append("❄️ 空方弱勢整理：均線蓋頭")
+    
+    if not status:
+        if curr_price > v60: status.append("🌊 多方行進 (觀察)")
+        else: status.append("☁️ 空方盤整 (觀望)")
+
+    return status, need_notify, curr_price, up_count, down_count, v60
+
+# --- 4. 穩定抓取 (不使用快取，避免狀態鎖死) ---
+def fetch_data_stable(symbol):
+    # 建立一個新的 Session
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    
+    suffixes = [".TW", ".TWO"]
+    
+    for suffix in suffixes:
+        full_symbol = f"{symbol}{suffix}"
+        try:
+            # 這裡不使用 download，改用 Ticker 物件，有時候比較不會被擋
+            t = yf.Ticker(full_symbol, session=session)
+            # 只抓最近 3 個月的資料，減少數據量，加快速度
+            df = t.history(period="3mo")
             
-        dist_240 = abs(curr_price - s60.iloc[-1]) / s60.iloc[-1]
-        if dist_240 < 0.05 and down_count >= 3:
-            status.append("⚠️ 年線保衛戰：均線偏弱")
-            need_notify = True 
-        elif curr_price < v60 and down_count >= 3:
-            status.append("❄️ 空方弱勢整理：均線蓋頭")
-        
-        if not status:
-            if curr_price > v60: status.append("🌊 多方行進 (觀察)")
-            else: status.append("☁️ 空方盤整 (觀望)")
-
-        return status, need_notify, curr_price, up_count, down_count, v60
-    except Exception as e:
-        return [f"計算錯誤: {str(e)}"], False, 0, 0, 0, 0
-
-# --- 4. 超級團購下載 (Super Batch Fetch) ---
-@st.cache_data(ttl=60) # 為了測試準確度，暫時縮短快取時間
-def fetch_super_batch(tickers):
-    if not tickers: return {}
-    
-    unique_tickers = list(set(tickers))
-    
-    # 策略：分兩批下載 (.TW 和 .TWO)
-    list_tw = [f"{t}.TW" for t in unique_tickers]
-    list_two = [f"{t}.TWO" for t in unique_tickers]
-    
-    valid_data = {}
-    
-    # 定義下載並處理的內部函式
-    def download_and_parse(symbol_list):
-        if not symbol_list: return
-        
-        # 關鍵修正：強制 group_by='ticker' 確保結構統一
-        data = yf.download(symbol_list, period="1y", group_by='ticker', progress=False, threads=True)
-        
-        # 處理單支股票的情況 (Yahoo 會回傳單層 DataFrame)
-        if len(symbol_list) == 1:
-            ticker = symbol_list[0]
-            if not data.empty:
-                # 把它包裝成類似多層的結構方便統一處理
-                valid_data[ticker] = data
-        else:
-            # 多支股票 (Yahoo 回傳多層 DataFrame)
-            for ticker in symbol_list:
-                try:
-                    # 嘗試提取該 ticker 的數據
-                    df = data[ticker]
-                    # 檢查是否有數據 (且不是全空)
-                    if not df.empty and not df['Close'].isna().all():
-                        valid_data[ticker] = df
-                except KeyError:
-                    continue
-
-    # 執行下載
-    st.write("📥 正在下載上市股票資料...")
-    download_and_parse(list_tw)
-    
-    st.write("📥 正在下載上櫃股票資料...")
-    download_and_parse(list_two)
-    
-    return valid_data
+            if not df.empty and len(df) > 50:
+                return df, full_symbol
+                
+            time.sleep(0.2) # 稍微休息
+        except:
+            continue
+            
+    return None, None
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 超級團購版")
+st.title("📈 股市戰略 - 終極穩定版")
 
-if st.button("🧹 清除暫存 (若資料卡住請按我)"):
+if st.button("🧹 清除暫存 (若卡住請按我)"):
     st.cache_data.clear()
     st.rerun()
 
@@ -186,70 +161,78 @@ try:
     run_button = st.sidebar.button("立即執行判讀")
 
     if run_button:
-        # === 1. 解析輸入 ===
-        raw_tickers = re.split(r'[,\s;，、]+', ticker_input)
-        # 過濾空字串，但保留順序與重複
-        user_tickers = [t.strip() for t in raw_tickers if t.strip()]
+        # === 1. 雷射精準解析 (Regex) ===
+        # 直接抓取所有「4個數字」的組合，忽略所有逗號、頓號、換行
+        tickers = re.findall(r'[0-9]{4}', ticker_input)
+        # 去除重複並保持順序
+        tickers = list(dict.fromkeys(tickers))
         
-        st.write(f"📊 收到 {len(user_tickers)} 個代號，準備分析...")
-        
-        # === 2. 執行超級團購 ===
-        data_map = fetch_super_batch(user_tickers)
+        st.info(f"🔍 系統識別出 {len(tickers)} 檔股票代號： {', '.join(tickers)}")
         
         results = []
         notify_list = []
         
-        # === 3. 建立報表 (嚴格按照輸入順序) ===
-        for i, t in enumerate(user_tickers):
-            # 尋找數據 (先找 .TW，再找 .TWO)
-            full_tw = f"{t}.TW"
-            full_two = f"{t}.TWO"
+        # 建立一個進度顯示區 (Placeholder)
+        status_table = st.empty()
+        progress_bar = st.progress(0)
+        
+        # 初始化顯示表格 (讓您先看到有哪些股票在排隊)
+        current_df = pd.DataFrame({
+            "代號": tickers,
+            "狀態": ["⏳ 等待中"] * len(tickers),
+            "公司名稱": [STOCK_NAMES.get(t, "") for t in tickers]
+        })
+        status_table.dataframe(current_df, use_container_width=True, hide_index=True)
+        
+        # === 2. 逐一執行 (穩定模式) ===
+        for i, t in enumerate(tickers):
+            # 抓取資料
+            df, final_symbol = fetch_data_stable(t)
             
-            df = None
-            final_symbol = t
-            
-            if full_tw in data_map:
-                df = data_map[full_tw]
-                final_symbol = full_tw
-            elif full_two in data_map:
-                df = data_map[full_two]
-                final_symbol = full_two
-            
-            # 預設值
-            row_data = {
-                "序號": i + 1,
-                "輸入代號": t,
-                "公司名稱": STOCK_NAMES.get(t, "未知"),
-                "現價": 0,
-                "均線狀態": "❌",
-                "戰略訊號": "❌ 查無資料 (或代號錯誤)"
-            }
-            
+            # 更新狀態
             if df is not None:
                 try:
                     ch_name = STOCK_NAMES.get(t, final_symbol)
                     status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
                     status_str = " | ".join(status_list)
                     
-                    row_data["公司名稱"] = ch_name
-                    row_data["現價"] = round(price, 2)
-                    row_data["均線狀態"] = f"⬆️{up_cnt} / ⬇️{down_cnt}"
-                    row_data["戰略訊號"] = status_str
+                    results.append({
+                        "代號": t, # 顯示原始輸入代號，方便對照
+                        "實際代號": final_symbol,
+                        "公司名稱": ch_name,
+                        "現價": price,
+                        "均線狀態": f"⬆️{up_cnt} / ⬇️{down_cnt}",
+                        "戰略訊號": status_str
+                    })
                     
                     if need_notify:
-                        report = f"【{ch_name}】{price} | {status_str}\n"
-                        notify_list.append(report)
+                        notify_list.append(f"【{ch_name}】{price} | {status_str}\n")
                         
+                    # 更新暫存表格的狀態 (視覺回饋)
+                    current_df.loc[i, "狀態"] = "✅ 完成"
+                    current_df.loc[i, "公司名稱"] = ch_name
+                    
                 except Exception as e:
-                    row_data["戰略訊號"] = f"計算錯誤: {str(e)}"
+                    results.append({"代號": t, "公司名稱": "計算錯", "現價": 0, "均線狀態": "❌", "戰略訊號": str(e)})
+                    current_df.loc[i, "狀態"] = "❌ 錯誤"
+            else:
+                results.append({"代號": t, "公司名稱": "未知", "現價": 0, "均線狀態": "❌", "戰略訊號": "❌ 連線失敗 (Yahoo擋)"})
+                current_df.loc[i, "狀態"] = "❌ 失敗"
             
-            results.append(row_data)
-        
-        st.success("✅ 分析完成！")
+            # 即時更新表格
+            status_table.dataframe(current_df, use_container_width=True, hide_index=True)
+            progress_bar.progress((i + 1) / len(tickers))
+            
+            # 隨機休息，避免封鎖
+            time.sleep(random.uniform(0.1, 0.5))
+
+        # === 3. 最終結果整理 ===
+        st.success("✅ 全部掃描完成！詳細報告如下：")
         
         if results:
-            df_res = pd.DataFrame(results)
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
+            final_df = pd.DataFrame(results)
+            # 重新渲染最終表格
+            status_table.dataframe(final_df, use_container_width=True, hide_index=True)
             
             if notify_list and MY_GMAIL:
                 receiver_list = [MY_GMAIL, friend_email]
@@ -259,4 +242,4 @@ try:
                 st.success(f"已發送 {len(notify_list)} 則通知信。")
 
 except Exception as e:
-    st.error(f"系統錯誤: {e}")
+    st.error(f"系統嚴重錯誤: {e}")
