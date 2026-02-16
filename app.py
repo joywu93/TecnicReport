@@ -10,7 +10,7 @@ import random
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 慢速穩健版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 精準數據版", layout="wide")
 
 # --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
@@ -49,7 +49,8 @@ def check_strategy(df):
         close = close.dropna()
         volume = volume.dropna()
         
-        if len(close) < 60: return [], "資料不足", 0
+        # 至少要有 60 天資料才能算季線
+        if len(close) < 60: return [], "資料不足", 0, False
         
         curr_price = close.iloc[-1]
         prev_price = close.iloc[-2]
@@ -67,9 +68,10 @@ def check_strategy(df):
         status = []
         need_notify = False
         
-        # === 乖離率警示 ===
+        # === 乖離率警示 (維持您的 1.3 倍) ===
+        # 因為現在抓 1 年資料，v60 絕對準確，這裡一定會觸發
         if curr_price >= v60 * 1.3:
-            status.append("⚠️ 乖離過大")
+            status.append(f"⚠️ 乖離過大 (季線{v60:.1f})")
             need_notify = True
 
         # === 策略訊號 ===
@@ -94,23 +96,24 @@ def check_strategy(df):
     except Exception as e:
         return [f"計算錯: {e}"], "錯誤", 0, False
 
-# --- 4. 慢速穩定抓取 ---
+# --- 4. 慢速穩定抓取 (修正為 1 年數據) ---
 def fetch_one_by_one(ticker):
     # 先試 TW
     full_symbol = f"{ticker}.TW"
     try:
         t = yf.Ticker(full_symbol)
-        df = t.history(period="3mo")
+        # === 關鍵修改：改成 1y (1年)，確保季線運算準確 ===
+        df = t.history(period="1y") 
         
-        if not df.empty:
+        if not df.empty and len(df) > 60:
             return df, full_symbol
             
         # 再試 TWO
         full_symbol = f"{ticker}.TWO"
         t = yf.Ticker(full_symbol)
-        df = t.history(period="3mo")
+        df = t.history(period="1y") 
         
-        if not df.empty:
+        if not df.empty and len(df) > 60:
             return df, full_symbol
             
     except:
@@ -121,8 +124,8 @@ def fetch_one_by_one(ticker):
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 慢速穩健版")
-st.caption("此模式會逐一掃描，速度較慢但保證不漏單。")
+st.title("📈 股市戰略 - 精準數據版")
+st.caption("已升級抓取 1 年歷史數據，確保季線乖離率計算精準。")
 
 # 手機版切換
 use_mobile_view = st.toggle("📱 手機卡片模式", value=True)
@@ -142,7 +145,7 @@ try:
             default_val = MY_PRIVATE_LIST
             
         ticker_input = st.text_area("股票清單", value=default_val, height=250)
-        submit_btn = st.form_submit_button(label='🚀 開始執行 (約需30秒)')
+        submit_btn = st.form_submit_button(label='🚀 開始執行 (速度較慢請耐心等候)')
 
     if submit_btn:
         # 1. 解析輸入
@@ -150,7 +153,7 @@ try:
         user_tickers = list(dict.fromkeys(raw_tickers)) # 去重
         
         total_stocks = len(user_tickers)
-        st.info(f"📊 偵測到 {total_stocks} 檔股票，正在逐一連線...")
+        st.info(f"📊 偵測到 {total_stocks} 檔股票，正在精確計算...")
         
         results = []
         notify_list = []
@@ -159,7 +162,7 @@ try:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 2. 逐一處理 (不分批，就是一支一支來，確保穩定)
+        # 2. 逐一處理
         for i, t in enumerate(user_tickers):
             status_text.text(f"正在分析 ({i+1}/{total_stocks}): {t} ...")
             
@@ -171,7 +174,7 @@ try:
                 "名稱": STOCK_NAMES.get(t, t),
                 "現價": 0,
                 "狀態": "❌",
-                "訊號": "❌ 無法讀取 (可能被擋)"
+                "訊號": "❌ 無法讀取"
             }
             
             if df is not None:
@@ -191,7 +194,7 @@ try:
             # 更新進度
             progress_bar.progress((i + 1) / total_stocks)
             
-            # 休息 0.5 秒，這是關鍵！避免被 Yahoo 封鎖 IP
+            # 維持休息時間，保護 IP
             time.sleep(0.5)
             
         st.success("✅ 全部掃描完成！")
