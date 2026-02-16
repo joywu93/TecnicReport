@@ -6,23 +6,13 @@ from email.mime.text import MIMEText
 import time
 import re
 import os
-import requests
-import random
 
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 直球對決版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 極速團購版", layout="wide")
 
-# 隨機偽裝標頭 (這是破解封鎖的關鍵)
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-]
-
-# --- 1. 中文名稱對照表 (維持您的完整名單) ---
+# --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "6203": "海韻電", "3570": "大塚", "4766": "南寶", "NVDA": "輝達",
     "2313": "華通", "2454": "聯發科", "2303": "聯電", "2603": "長榮", "2609": "陽明", "2615": "萬海",
@@ -50,13 +40,18 @@ def send_email_batch(sender, pwd, receivers, subject, body):
 
 # --- 3. 核心判讀邏輯 ---
 def check_strategy(df):
+    # 確保資料足夠
+    if len(df) < 60:
+        return [], False, 0, 0, 0, 0
+
     close = df['Close']
     volume = df['Volume']
+    
     curr_price = close.iloc[-1]
     prev_price = close.iloc[-2]
     curr_vol = volume.iloc[-1]
     prev_vol = volume.iloc[-2]
-    pct_change = (curr_price - prev_price) / prev_price
+    pct_change = (curr_price - prev_price) / prev_price if prev_price != 0 else 0
     
     price_4_days_ago = close.iloc[-5] 
     s3 = close.rolling(3).mean()
@@ -114,44 +109,66 @@ def check_strategy(df):
 
     return status, need_notify, curr_price, up_count, down_count, v60
 
-# --- 4. 強韌抓取函式 (含隨機偽裝) ---
-def fetch_data_robust(symbol):
-    # 建立一個新的 Session 並隨機選一個 User-Agent
-    session = requests.Session()
-    session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
+# --- 4. 團購式資料抓取 (Batch Download) ---
+@st.cache_data(ttl=300) # 快取 5 分鐘
+def fetch_batch_data(tickers):
+    # 第一步：假設全部都是上市 (.TW)
+    tw_tickers = [f"{t}.TW" for t in tickers]
     
-    suffixes = [".TW", ".TWO"]
-    max_retries = 2
+    st.write("📥 正在進行大量下載 (上市)...")
+    data_tw = yf.download(tw_tickers, period="1y", group_by='ticker', progress=False)
     
-    for suffix in suffixes:
-        full_symbol = f"{symbol}{suffix}"
+    # 第二步：檢查哪些失敗了 (沒有資料)
+    failed_tickers = []
+    valid_data = {}
+    
+    for t in tickers:
+        full_symbol = f"{t}.TW"
+        try:
+            # 嘗試取得該股票資料
+            if len(tickers) == 1:
+                df = data_tw
+            else:
+                df = data_tw[full_symbol]
+                
+            # 檢查是否為空或全是 NaN
+            if df.empty or df['Close'].isna().all():
+                failed_tickers.append(t)
+            else:
+                valid_data[t] = (df, full_symbol)
+        except KeyError:
+            failed_tickers.append(t)
+            
+    # 第三步：失敗的改試上櫃 (.TWO)
+    if failed_tickers:
+        st.write(f"📥 正在重試 {len(failed_tickers)} 檔上櫃股票 (.TWO)...")
+        two_tickers = [f"{t}.TWO" for t in failed_tickers]
+        data_two = yf.download(two_tickers, period="1y", group_by='ticker', progress=False)
         
-        for attempt in range(max_retries):
+        for t in failed_tickers:
+            full_symbol = f"{t}.TWO"
             try:
-                # 使用 yf.Ticker 抓取
-                t = yf.Ticker(full_symbol, session=session)
-                df = t.history(period="1y")
+                if len(two_tickers) == 1:
+                    df = data_two
+                else:
+                    df = data_two[full_symbol]
                 
-                if not df.empty and len(df) > 60:
-                    return df, full_symbol # 成功
+                if not df.empty and not df['Close'].isna().all():
+                    valid_data[t] = (df, full_symbol)
+                else:
+                    valid_data[t] = (None, "失敗")
+            except KeyError:
+                valid_data[t] = (None, "失敗")
                 
-                # 失敗了，休息一下再試 (隨機休息 0.5 ~ 1.5 秒)
-                time.sleep(random.uniform(0.5, 1.5))
-                
-            except Exception:
-                time.sleep(1)
-                pass
-    
-    return None, None
+    return valid_data
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 直球對決版")
+st.title("📈 股市戰略 - 極速團購版")
 
-if st.button("🧹 清除暫存 (重新整理)"):
+if st.button("🧹 清除暫存"):
     st.cache_data.clear()
-    st.rerun()
 
 try:
     MY_GMAIL = st.secrets.get("GMAIL_USER", "")
@@ -171,25 +188,24 @@ try:
     if run_button:
         # 處理輸入
         raw_tickers = re.split(r'[,\s;，、]+', ticker_input)
-        # 去除重複並保持順序
         tickers = list(dict.fromkeys([t.strip() for t in raw_tickers if t.strip()]))
         
-        st.write(f"🔍 準備分析 {len(tickers)} 檔股票...")
+        st.write(f"🔍 開始處理 {len(tickers)} 檔股票...")
+        
+        # === 呼叫團購下載 ===
+        stock_data_map = fetch_batch_data(tickers)
         
         results = []
         notify_list = []
         
-        # 建立即時進度顯示區
-        progress_bar = st.progress(0)
-        status_box = st.empty()
-        
-        for i, t in enumerate(tickers):
-            status_box.markdown(f"**正在連線 ({i+1}/{len(tickers)})：** `{t}` ...")
+        # 依照使用者輸入的順序建立報告 (確保不漏掉)
+        for t in tickers:
+            data_tuple = stock_data_map.get(t)
             
-            df, final_symbol = fetch_data_robust(t)
-            
-            # --- 關鍵修正：不管有沒有抓到，都加入表格 ---
-            if df is not None:
+            if data_tuple and data_tuple[0] is not None:
+                df = data_tuple[0]
+                final_symbol = data_tuple[1]
+                
                 try:
                     ch_name = STOCK_NAMES.get(t, final_symbol)
                     status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
@@ -208,43 +224,31 @@ try:
                     if need_notify:
                         notify_list.append(report)
                 except Exception as e:
-                    # 抓到資料但計算出錯
-                    results.append({
+                     results.append({
                         "代號": t,
-                        "公司名稱": STOCK_NAMES.get(t, "未知"),
+                        "公司名稱": "計算錯誤",
                         "現價": 0,
                         "均線狀態": "❌",
-                        "戰略訊號": f"計算錯誤: {e}"
+                        "戰略訊號": str(e)
                     })
             else:
-                # --- 這是您最需要的：顯示失敗的股票 ---
+                # 即使沒抓到，也要顯示！
                 results.append({
                     "代號": t,
                     "公司名稱": STOCK_NAMES.get(t, "未知"),
                     "現價": 0,
                     "均線狀態": "❌",
-                    "戰略訊號": "❌ 讀取失敗 (Yahoo 阻擋)"
+                    "戰略訊號": "❌ 查無資料 (可能下市或輸入錯誤)"
                 })
-            
-            progress_bar.progress((i + 1) / len(tickers))
-            # 隨機等待，模仿人類操作
-            time.sleep(random.uniform(0.2, 0.6))
-
-        status_box.success("✅ 分析完成！所有股票狀態如下：")
         
-        # 顯示完整表格 (包含失敗的)
+        st.success("✅ 分析完成！")
+        
         if results:
             df_res = pd.DataFrame(results)
-            # 將失敗的排到最上面，讓您一眼看到
-            df_res = df_res.sort_values(by="現價", ascending=True) 
             st.dataframe(df_res, use_container_width=True)
             
             if notify_list and MY_GMAIL:
                 receiver_list = [MY_GMAIL, friend_email]
-                chunks = [notify_list[i:i + 5] for i in range(0, len(notify_list), 5)]
+                chunks = [notify_list[i:i + 10] for i in range(0, len(notify_list), 10)] # 一封信塞多一點
                 for i, chunk in enumerate(chunks):
-                    send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i+1})", "".join(chunk))
-                st.success(f"已發送 {len(notify_list)} 則通知信。")
-
-except Exception as e:
-    st.error(f"系統錯誤: {e}")
+                    send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i
