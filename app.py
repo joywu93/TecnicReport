@@ -10,7 +10,7 @@ import os
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 極速團購版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 直觀清單版", layout="wide")
 
 # --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
@@ -40,13 +40,10 @@ def send_email_batch(sender, pwd, receivers, subject, body):
 
 # --- 3. 核心判讀邏輯 ---
 def check_strategy(df):
-    # 確保資料足夠
-    if len(df) < 60:
-        return [], False, 0, 0, 0, 0
+    if len(df) < 60: return [], False, 0, 0, 0, 0
 
     close = df['Close']
     volume = df['Volume']
-    
     curr_price = close.iloc[-1]
     prev_price = close.iloc[-2]
     curr_vol = volume.iloc[-1]
@@ -71,7 +68,6 @@ def check_strategy(df):
     status = []
     need_notify = False
     
-    # 策略
     if prev_price > p60 and curr_price < v60:
         status.append("📉 轉空警示：跌破季線")
         need_notify = True
@@ -109,65 +105,53 @@ def check_strategy(df):
 
     return status, need_notify, curr_price, up_count, down_count, v60
 
-# --- 4. 團購式資料抓取 (Batch Download) ---
-@st.cache_data(ttl=300) # 快取 5 分鐘
+# --- 4. 團購下載 (不快取，避免狀態錯亂) ---
 def fetch_batch_data(tickers):
-    # 第一步：假設全部都是上市 (.TW)
-    tw_tickers = [f"{t}.TW" for t in tickers]
+    # 去除重複的代號來下載，節省流量
+    unique_tickers = list(set(tickers))
     
-    st.write("📥 正在進行大量下載 (上市)...")
-    data_tw = yf.download(tw_tickers, period="1y", group_by='ticker', progress=False)
+    # 1. 下載 .TW
+    tw_list = [f"{t}.TW" for t in unique_tickers]
+    data_tw = yf.download(tw_list, period="1y", group_by='ticker', progress=False)
     
-    # 第二步：檢查哪些失敗了 (沒有資料)
-    failed_tickers = []
     valid_data = {}
-    
-    for t in tickers:
-        full_symbol = f"{t}.TW"
+    failed_candidates = []
+
+    # 2. 整理 .TW 結果
+    for t in unique_tickers:
+        full = f"{t}.TW"
         try:
-            # 嘗試取得該股票資料
-            if len(tickers) == 1:
-                df = data_tw
+            df = data_tw if len(unique_tickers) == 1 else data_tw[full]
+            if not df.empty and not df['Close'].isna().all():
+                valid_data[t] = (df, full)
             else:
-                df = data_tw[full_symbol]
-                
-            # 檢查是否為空或全是 NaN
-            if df.empty or df['Close'].isna().all():
-                failed_tickers.append(t)
-            else:
-                valid_data[t] = (df, full_symbol)
+                failed_candidates.append(t)
         except KeyError:
-            failed_tickers.append(t)
-            
-    # 第三步：失敗的改試上櫃 (.TWO)
-    if failed_tickers:
-        st.write(f"📥 正在重試 {len(failed_tickers)} 檔上櫃股票 (.TWO)...")
-        two_tickers = [f"{t}.TWO" for t in failed_tickers]
-        data_two = yf.download(two_tickers, period="1y", group_by='ticker', progress=False)
-        
-        for t in failed_tickers:
-            full_symbol = f"{t}.TWO"
+            failed_candidates.append(t)
+    
+    # 3. 重試 .TWO
+    if failed_candidates:
+        two_list = [f"{t}.TWO" for t in failed_candidates]
+        data_two = yf.download(two_list, period="1y", group_by='ticker', progress=False)
+        for t in failed_candidates:
+            full = f"{t}.TWO"
             try:
-                if len(two_tickers) == 1:
-                    df = data_two
-                else:
-                    df = data_two[full_symbol]
-                
+                df = data_two if len(two_list) == 1 else data_two[full]
                 if not df.empty and not df['Close'].isna().all():
-                    valid_data[t] = (df, full_symbol)
+                    valid_data[t] = (df, full)
                 else:
-                    valid_data[t] = (None, "失敗")
+                    valid_data[t] = (None, "無資料")
             except KeyError:
-                valid_data[t] = (None, "失敗")
+                valid_data[t] = (None, "無資料")
                 
     return valid_data
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 極速團購版")
+st.title("📈 股市戰略 - 直觀清單版")
 
-if st.button("🧹 清除暫存"):
+if st.button("🧹 重新整理"):
     st.cache_data.clear()
 
 try:
@@ -182,73 +166,74 @@ try:
     if friend_email.strip() == MY_GMAIL:
         display_tickers = MY_PRIVATE_LIST
 
-    ticker_input = st.sidebar.text_area("股票清單", value=display_tickers, height=300)
+    ticker_input = st.sidebar.text_area("股票清單 (依輸入順序顯示，重複亦保留)", value=display_tickers, height=300)
     run_button = st.sidebar.button("立即執行判讀")
 
     if run_button:
-        # 處理輸入
+        # === 1. 解析輸入 (保留順序與重複) ===
         raw_tickers = re.split(r'[,\s;，、]+', ticker_input)
-        tickers = list(dict.fromkeys([t.strip() for t in raw_tickers if t.strip()]))
+        # 只過濾空字串，不移除重複！
+        tickers = [t.strip() for t in raw_tickers if t.strip()]
         
-        st.write(f"🔍 開始處理 {len(tickers)} 檔股票...")
+        st.write(f"📊 正在分析 {len(tickers)} 筆資料 (包含重複)...")
         
-        # === 呼叫團購下載 ===
+        # === 2. 批量下載 ===
         stock_data_map = fetch_batch_data(tickers)
         
         results = []
         notify_list = []
         
-        # 依照使用者輸入的順序建立報告 (確保不漏掉)
-        for t in tickers:
+        # === 3. 依照使用者輸入順序建立表格 ===
+        for i, t in enumerate(tickers):
             data_tuple = stock_data_map.get(t)
+            
+            # 預設值
+            status_str = "❌ 查無資料"
+            price = 0
+            up_down = "❌"
+            final_symbol = t
+            ch_name = STOCK_NAMES.get(t, t)
             
             if data_tuple and data_tuple[0] is not None:
                 df = data_tuple[0]
                 final_symbol = data_tuple[1]
+                ch_name = STOCK_NAMES.get(t, final_symbol)
                 
                 try:
-                    ch_name = STOCK_NAMES.get(t, final_symbol)
                     status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
                     status_str = " | ".join(status_list)
-                    
-                    report = f"【{ch_name}】{price} | {status_str}\n"
-                    
-                    results.append({
-                        "代號": final_symbol,
-                        "公司名稱": ch_name,
-                        "現價": price,
-                        "均線狀態": f"⬆️{up_cnt} / ⬇️{down_cnt}",
-                        "戰略訊號": status_str
-                    })
+                    up_down = f"⬆️{up_cnt} / ⬇️{down_cnt}"
                     
                     if need_notify:
+                        report = f"【{ch_name}】{price} | {status_str}\n"
                         notify_list.append(report)
+                        
                 except Exception as e:
-                     results.append({
-                        "代號": t,
-                        "公司名稱": "計算錯誤",
-                        "現價": 0,
-                        "均線狀態": "❌",
-                        "戰略訊號": str(e)
-                    })
-            else:
-                # 即使沒抓到，也要顯示！
-                results.append({
-                    "代號": t,
-                    "公司名稱": STOCK_NAMES.get(t, "未知"),
-                    "現價": 0,
-                    "均線狀態": "❌",
-                    "戰略訊號": "❌ 查無資料 (可能下市或輸入錯誤)"
-                })
+                    status_str = f"計算錯誤: {e}"
+
+            results.append({
+                "序號": i + 1,  # 讓您對照是第幾支
+                "輸入代號": t,
+                "實際代號": final_symbol,
+                "公司名稱": ch_name,
+                "現價": price,
+                "均線狀態": up_down,
+                "戰略訊號": status_str
+            })
         
         st.success("✅ 分析完成！")
         
         if results:
             df_res = pd.DataFrame(results)
-            st.dataframe(df_res, use_container_width=True)
+            # 使用 hide_index=True 隱藏 Pandas 的 0,1,2，改用我們自訂的「序號」
+            st.dataframe(df_res, use_container_width=True, hide_index=True)
             
             if notify_list and MY_GMAIL:
                 receiver_list = [MY_GMAIL, friend_email]
-                chunks = [notify_list[i:i + 10] for i in range(0, len(notify_list), 10)] # 一封信塞多一點
+                chunks = [notify_list[i:i + 10] for i in range(0, len(notify_list), 10)]
                 for i, chunk in enumerate(chunks):
-                    send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i
+                    send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i+1})", "".join(chunk))
+                st.success(f"已發送 {len(notify_list)} 則通知信。")
+
+except Exception as e:
+    st.error(f"系統錯誤: {e}")
