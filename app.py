@@ -7,19 +7,34 @@ import time
 import re
 import os
 import requests
+import random
 
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 專家校正版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 隱形戰機版", layout="wide")
 
-# 偽裝標頭
-SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-})
+# --- 1. 隨機偽裝表頭 (防封鎖關鍵) ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/118.0"
+]
 
-# --- 1. 中文名稱對照表 ---
+def get_session():
+    session = requests.Session()
+    # 隨機挑選一個瀏覽器身分
+    agent = random.choice(USER_AGENTS)
+    session.headers.update({
+        "User-Agent": agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    })
+    return session
+
+# --- 2. 中文名稱對照表 ---
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "6203": "海韻電", "3570": "大塚", "4766": "南寶", "NVDA": "輝達",
     "2313": "華通", "2454": "聯發科", "2303": "聯電", "2603": "長榮", "2609": "陽明", "2615": "萬海",
@@ -31,7 +46,7 @@ STOCK_NAMES = {
     "8271": "宇瞻", "5439": "高技"
 }
 
-# --- 2. 安全讀取設定 ---
+# --- 3. 安全讀取設定 ---
 def get_config(key, default_value):
     val = os.environ.get(key)
     if val: return val
@@ -44,7 +59,7 @@ MY_GMAIL = get_config("GMAIL_USER", "")
 MY_PWD = get_config("GMAIL_PASSWORD", "")
 MY_PRIVATE_LIST = get_config("MY_LIST", "2330") 
 
-# --- 3. Email 發送函數 ---
+# --- 4. Email 發送函數 ---
 def send_email_batch(sender, pwd, receivers, subject, body):
     if not sender or not pwd: return False
     try:
@@ -59,16 +74,16 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception:
         return False
 
-# --- 4. 核心判讀邏輯 (專家算式) ---
+# --- 5. 核心判讀邏輯 (專家算式：交易日推算) ---
 def check_strategy(df):
     try:
-        # yfinance 的 df 索引已經排除假日，所以 rolling(60) 就是「過去60個交易日」
+        # yfinance 回傳的已經是「交易日」，假日已被剔除
+        # rolling(60) 代表「往前推 60 根 K 棒」，完全符合您的「有資料才算」的要求
         close = df['Close']
         volume = df['Volume']
         close = close.dropna()
         volume = volume.dropna()
         
-        # 再次確認資料長度 (雖然抓1年通常夠，但還是防呆一下)
         if len(close) < 60: return [], "資料不足", 0, "N/A", 0, False
         
         curr_price = close.iloc[-1]
@@ -76,18 +91,18 @@ def check_strategy(df):
         curr_vol = volume.iloc[-1]
         prev_vol = volume.iloc[-2]
         
-        # 計算均線 (Rolling Window = 交易日K棒數)
+        # 計算均線
         s3 = close.rolling(3).mean()
         s5 = close.rolling(5).mean()
         s10 = close.rolling(10).mean()
         s20 = close.rolling(20).mean()
-        s60 = close.rolling(60).mean() # 這裡算出來就是真正的季線
+        s60 = close.rolling(60).mean()
         
         v60 = s60.iloc[-1]
         p60 = s60.iloc[-2]
         v5, v3 = s5.iloc[-1], s3.iloc[-1]
         
-        # 計算均線狀態
+        # 均線排列狀態
         trend_up = {
             5: v5 > s5.iloc[-2],
             10: s10.iloc[-1] > s10.iloc[-2],
@@ -105,22 +120,15 @@ def check_strategy(df):
         # 公式：(現價 - 季線) / 季線 * 100
         bias_pct = ((curr_price - v60) / v60) * 100
         
-        # 顯示邏輯：
-        # 1. 正常顯示：都會顯示目前乖離率，讓您參考
-        # 2. 警示標準：
-        #    - 超過 20% (1.2倍)：顯示 🔸 偏高
-        #    - 超過 30% (1.3倍)：顯示 🔴 過大 (您的原始標準)
-        
-        bias_info = f"乖離 {bias_pct:.1f}%" # 預設字串
-        
-        if bias_pct >= 30: # 原始嚴格標準
+        # 乖離率分級警示
+        if bias_pct >= 30: 
             status.append(f"🔴 乖離率過大 (+{bias_pct:.1f}%)")
             need_notify = True
-        elif bias_pct >= 20: # 警戒區
+        elif bias_pct >= 20: 
             status.append(f"🔸 乖離率偏高 (+{bias_pct:.1f}%)")
             need_notify = True
             
-        # === 策略訊號 ===
+        # 策略訊號
         if prev_price > p60 and curr_price < v60:
             status.append("📉 跌破季線")
             need_notify = True
@@ -137,28 +145,38 @@ def check_strategy(df):
         if not status: status.append(f"{trend}盤整")
 
         return status, f"{trend}", curr_price, ma_status_str, bias_pct, need_notify
-    except Exception as e:
-        return [f"計算錯"], "錯誤", 0, "N/A", 0, False
+    except Exception:
+        return [f"計算錯誤"], "錯誤", 0, "N/A", 0, False
 
-# --- 5. 抓取函數 ---
+# --- 6. 抓取函數 (帶隨機延遲 + 錯誤回報) ---
 def fetch_one_by_one(ticker):
+    error_msg = ""
     try:
-        # 抓取 1 年資料，保證交易日數量 > 60
-        t = yf.Ticker(f"{ticker}.TW", session=SESSION)
-        df = t.history(period="1y") 
-        if not df.empty and len(df) > 60: return df, f"{ticker}.TW"
+        session = get_session() # 每次都換新身分
         
-        t = yf.Ticker(f"{ticker}.TWO", session=SESSION)
+        # 1. 抓取 1 年資料 (確保季線運算準確)
+        t = yf.Ticker(f"{ticker}.TW", session=session)
+        df = t.history(period="1y") 
+        if not df.empty and len(df) > 60: return df, f"{ticker}.TW", ""
+        
+        # 2. 失敗則試 TWO
+        t = yf.Ticker(f"{ticker}.TWO", session=session)
         df = t.history(period="1y")
-        if not df.empty and len(df) > 60: return df, f"{ticker}.TWO"
-    except:
-        pass
-    return None, None
+        if not df.empty and len(df) > 60: return df, f"{ticker}.TWO", ""
+        
+        error_msg = "查無資料 (空值)"
+        
+    except Exception as e:
+        error_msg = str(e) # 抓出真實錯誤原因
+        
+    return None, None, error_msg
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 專家校正版")
+st.title("📈 股市戰略 - 隱形戰機版")
+st.caption("已啟用隨機延遲技術，掃描速度較慢以避免封鎖。")
+
 use_mobile_view = st.toggle("📱 手機卡片模式", value=True)
 
 with st.sidebar.form(key='stock_form'):
@@ -172,14 +190,20 @@ if submit_btn:
     raw_tickers = re.findall(r'\d{4}', ticker_input)
     user_tickers = list(dict.fromkeys(raw_tickers))
     
-    st.info(f"📊 正在分析 {len(user_tickers)} 檔股票...")
+    st.info(f"📊 偵測到 {len(user_tickers)} 檔股票，啟動隱形掃描 (速度會變慢)...")
     
     results = []
     notify_list = []
     progress_bar = st.progress(0)
     
+    # 建立一個容器來即時更新狀態
+    status_text = st.empty()
+    
     for i, t in enumerate(user_tickers):
-        df, final_symbol = fetch_one_by_one(t)
+        status_text.text(f"正在分析 ({i+1}/{len(user_tickers)}): {t} ...")
+        
+        # 執行抓取
+        df, final_symbol, err_msg = fetch_one_by_one(t)
         
         row_data = {
             "序號": i + 1,
@@ -188,7 +212,7 @@ if submit_btn:
             "現價": 0,
             "均線": "N/A",
             "乖離": 0,
-            "訊號": "❌ 無法讀取"
+            "訊號": f"❌ {err_msg}" if err_msg else "❌ 無法讀取"
         }
         
         if df is not None:
@@ -205,27 +229,27 @@ if submit_btn:
         
         results.append(row_data)
         progress_bar.progress((i + 1) / len(user_tickers))
-        time.sleep(0.5) 
         
-    st.success("✅ 分析完成")
+        # === 關鍵：隨機休息 1~3 秒 ===
+        # 這是為了看起來像真人在操作，避免被 Yahoo 鎖 IP
+        time.sleep(random.uniform(1.0, 3.0))
+        
+    status_text.text("✅ 分析完成！")
     
     df_res = pd.DataFrame(results)
     
     if use_mobile_view:
         for idx, row in df_res.iterrows():
-            # 視覺化邏輯
-            border = "1px solid #ddd" # 預設灰
+            border = "1px solid #ddd"
             bg_color = "#ffffff"
             
-            # 訊號顏色
-            if "🔴" in row['訊號']: border = "2px solid #dc3545" # 紅框(危險)
-            elif "🔸" in row['訊號']: border = "2px solid #ffc107" # 黃框(警告)
-            elif "🚀" in row['訊號'] or "🔥" in row['訊號']: border = "2px solid #28a745" # 綠框(多方)
+            if "🔴" in row['訊號']: border = "2px solid #dc3545" # 紅
+            elif "🔸" in row['訊號']: border = "2px solid #ffc107" # 黃
+            elif "🚀" in row['訊號'] or "🔥" in row['訊號']: border = "2px solid #28a745" # 綠
             
-            # 乖離率文字顏色
             bias_color = "black"
-            if row['乖離'] >= 20: bias_color = "#dc3545" # 紅字
-            elif row['乖離'] <= -20: bias_color = "#28a745" # 綠字(負乖離過大)
+            if row['乖離'] >= 20: bias_color = "#dc3545"
+            elif row['乖離'] <= -20: bias_color = "#28a745"
 
             with st.container():
                 st.markdown(f"""
@@ -248,7 +272,6 @@ if submit_btn:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-
     else:
         st.dataframe(df_res, use_container_width=True, hide_index=True)
 
