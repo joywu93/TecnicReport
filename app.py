@@ -11,16 +11,12 @@ import requests
 # ==========================================
 # 🔧 系統設定與偽裝
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 救援模式", layout="wide")
+st.set_page_config(page_title="股市戰略 - 堅持到底版", layout="wide")
 
-# 偽裝成瀏覽器的 Header (這是破解封鎖的關鍵)
+# 偽裝成瀏覽器 (更新 User-Agent)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
-
-# 建立專屬連線 Session
-session = requests.Session()
-session.headers.update(HEADERS)
 
 # --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
@@ -76,7 +72,7 @@ def check_strategy(df):
     status = []
     need_notify = False
     
-    # 策略條件
+    # 策略
     if prev_price > p60 and curr_price < v60:
         status.append("📉 轉空警示：跌破季線(60SMA)")
         need_notify = True
@@ -101,7 +97,7 @@ def check_strategy(df):
         status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
         need_notify = True
         
-    dist_240 = abs(curr_price - s60.iloc[-1]) / s60.iloc[-1] # 簡化用季線代替年線做防呆
+    dist_240 = abs(curr_price - s60.iloc[-1]) / s60.iloc[-1]
     if dist_240 < 0.05 and down_count >= 3:
         status.append("⚠️ 年線保衛戰：均線偏弱")
         need_notify = True 
@@ -118,33 +114,44 @@ def check_strategy(df):
 
     return status, need_notify, curr_price, up_count, down_count, v60
 
-# --- 4. 資料抓取 (使用快取 + 偽裝) ---
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_data_safe(symbol):
-    try:
-        # 嘗試 .TW
-        t = yf.Ticker(f"{symbol}.TW", session=session)
-        df = t.history(period="1y")
-        if not df.empty: return df, f"{symbol}.TW"
+# --- 4. 資料抓取 (具備重試機制) ---
+# 注意：這裡拿掉了 @st.cache_data，為了強制重試，確保資料完整
+def fetch_data_robust(symbol, max_retries=2):
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    
+    # 嘗試列表 (.TW 優先, 失敗試 .TWO)
+    suffixes = [".TW", ".TWO"]
+    
+    for suffix in suffixes:
+        full_symbol = f"{symbol}{suffix}"
         
-        # 嘗試 .TWO
-        t = yf.Ticker(f"{symbol}.TWO", session=session)
-        df = t.history(period="1y")
-        if not df.empty: return df, f"{symbol}.TWO"
-        
-        return None, None
-    except Exception as e:
-        return None, str(e)
+        # 重試迴圈
+        for attempt in range(max_retries):
+            try:
+                t = yf.Ticker(full_symbol, session=session)
+                df = t.history(period="1y")
+                
+                if not df.empty and len(df) > 60:
+                    return df, full_symbol # 成功抓到！
+                
+                # 如果是空的，休息一下再試
+                time.sleep(0.5)
+                
+            except Exception:
+                time.sleep(0.5)
+                pass
+    
+    return None, None
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 救援診斷版")
+st.title("📈 股市戰略 - 堅持到底版")
 
-# 1. 救命按鈕：清除快取
-if st.button("🧹 清除快取 (如果跑不出資料請按我)"):
+if st.button("🧹 清除快取 (異常時請按我)"):
     st.cache_data.clear()
-    st.success("快取已清除！請重新點擊「立即執行判讀」。")
+    st.success("快取已清除！")
 
 try:
     MY_GMAIL = st.secrets.get("GMAIL_USER", "")
@@ -170,21 +177,18 @@ try:
         
         results = []
         notify_list = []
+        failed_tickers = []
+        
         progress_bar = st.progress(0)
         status_box = st.empty()
-        
-        # 診斷計數器
-        success_count = 0
-        fail_count = 0
         
         for i, t in enumerate(tickers):
             status_box.text(f"正在連線: {t} ...")
             
-            # 呼叫抓取
-            df, final_symbol = fetch_data_safe(t)
+            # 呼叫強韌版抓取
+            df, final_symbol = fetch_data_robust(t)
             
-            if df is not None and not df.empty and len(df) > 60:
-                success_count += 1
+            if df is not None:
                 try:
                     ch_name = STOCK_NAMES.get(t, final_symbol)
                     status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
@@ -203,31 +207,32 @@ try:
                     if need_notify:
                         notify_list.append(report)
                 except Exception as e:
-                    st.error(f"分析 {t} 時發生錯誤: {e}")
+                    failed_tickers.append(f"{t} (數據錯誤)")
             else:
-                fail_count += 1
-                # 這裡不顯示錯誤，以免畫面太亂，只在最後統計
+                failed_tickers.append(f"{t} (無法讀取)")
             
             progress_bar.progress((i + 1) / len(tickers))
-            time.sleep(0.5) # 故意放慢速度，避免被鎖
+            # 每支股票間隔時間，避免被擋
+            time.sleep(0.3)
 
         status_box.text("分析完成！")
         
-        # 顯示統計結果
-        st.info(f"📊 統計：成功 {success_count} 檔 / 失敗 {fail_count} 檔")
-        
-        if fail_count > 0 and success_count == 0:
-            st.error("⚠️ 所有股票都無法讀取。可能原因：IP 仍被封鎖。請等待 1-2 小時後再試，或按上方的「清除快取」。")
-        
+        # 顯示成功結果
         if results:
             st.dataframe(pd.DataFrame(results))
+        
+        # 顯示失敗名單 (關鍵！)
+        if failed_tickers:
+            st.error(f"❌ 以下 {len(failed_tickers)} 檔股票讀取失敗 (Yahoo 連線逾時)：")
+            st.write(", ".join(failed_tickers))
+            st.warning("建議：請稍等 1 分鐘後再按一次「立即執行」，通常就能抓到了。")
             
-            if notify_list and MY_GMAIL:
-                receiver_list = [MY_GMAIL, friend_email]
-                chunks = [notify_list[i:i + 5] for i in range(0, len(notify_list), 5)]
-                for i, chunk in enumerate(chunks):
-                    send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i+1})", "".join(chunk))
-                st.success(f"已發送 {len(notify_list)} 則通知信。")
+        if notify_list and MY_GMAIL:
+            receiver_list = [MY_GMAIL, friend_email]
+            chunks = [notify_list[i:i + 5] for i in range(0, len(notify_list), 5)]
+            for i, chunk in enumerate(chunks):
+                send_email_batch(MY_GMAIL, MY_PWD, receiver_list, f"戰略訊號 ({i+1})", "".join(chunk))
+            st.success(f"已發送 {len(notify_list)} 則通知信。")
 
 except Exception as e:
     st.error(f"系統錯誤: {e}")
