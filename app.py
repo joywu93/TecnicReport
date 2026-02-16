@@ -7,11 +7,7 @@ import time
 import re
 import os
 
-# ==========================================
-# 🔧 設定區
-# ==========================================
-
-# --- 1. 中文名稱對照表 ---
+# --- 1. 中文名稱對照表 (維持不變) ---
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "6203": "海韻電", "3570": "大塚", "4766": "南寶", "NVDA": "輝達",
     "2313": "華通", "2454": "聯發科", "2303": "聯電", "2603": "長榮", "2609": "陽明", "2615": "萬海",
@@ -37,111 +33,6 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception as e:
         print(f"Error sending email: {e}")
         return False
-
-# --- 3. 核心判讀邏輯 ---
-def check_strategy(df):
-    close = df['Close']
-    volume = df['Volume']
-    
-    curr_price = close.iloc[-1]
-    prev_price = close.iloc[-2]
-    curr_vol = volume.iloc[-1]
-    prev_vol = volume.iloc[-2]
-    pct_change = (curr_price - prev_price) / prev_price
-    
-    price_4_days_ago = close.iloc[-5] 
-    
-    s3 = close.rolling(3).mean()
-    s5 = close.rolling(5).mean()
-    s10 = close.rolling(10).mean()
-    s20 = close.rolling(20).mean()
-    s60 = close.rolling(60).mean() 
-    s240 = close.rolling(240).mean()
-    
-    v240 = s240.iloc[-1] if len(close) >= 240 else s60.iloc[-1]
-    v60 = s60.iloc[-1]
-    p60 = s60.iloc[-2]
-    v5, v10, v20 = s5.iloc[-1], s10.iloc[-1], s20.iloc[-1]
-    p5, p10, p20 = s5.iloc[-2], s10.iloc[-2], s20.iloc[-2]
-    v3 = s3.iloc[-1]
-
-    trend_up = {5: v5 > p5, 10: v10 > p10, 20: v20 > p20, 60: v60 > p60}
-    up_count = sum([trend_up[5], trend_up[10], trend_up[20], trend_up[60]])
-    down_count = 4 - up_count
-    
-    status = []
-    need_notify = False
-    
-    # 1. 重大轉折訊號
-    if prev_price > p60 and curr_price < v60:
-        status.append("📉 轉空警示：跌破季線(60SMA)")
-        need_notify = True
-    elif prev_price < p60 and curr_price > v60:
-        status.append("🚀 轉多訊號：站上季線(60SMA)")
-        need_notify = True
-        
-    # 2. 強勢反彈
-    if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > v3:
-        status.append("🔥 強勢反彈 (漲>4%, 爆量1.5倍, 站上3SMA)")
-        need_notify = True
-        
-    # 3. 底部轉折
-    if up_count >= 2 and curr_price <= v60 * 1.1:
-        status.append(f"✨ 底部轉折：{up_count}條均線翻揚")
-        need_notify = True
-
-    # 4. 出貨警訊
-    cond_sell_a = (curr_vol > prev_vol * 1.3 and pct_change < 0)
-    cond_sell_b = (curr_price < price_4_days_ago)
-    
-    if cond_sell_a or cond_sell_b:
-        reasons = []
-        if cond_sell_a: reasons.append("爆量收黑")
-        if cond_sell_b: reasons.append("跌破4日價")
-        status.append(f"⚠️ 出貨警訊 ({'+'.join(reasons)})")
-        need_notify = True
-
-    # 5. 量價背離
-    if curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
-        status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
-        need_notify = True
-
-    # 6. 關鍵位置
-    dist_240 = abs(curr_price - v240) / v240
-    if dist_240 < 0.05 and down_count >= 3:
-        status.append("⚠️ 年線保衛戰：均線偏弱")
-        need_notify = True 
-    elif curr_price < v240 and down_count >= 3:
-        status.append("❄️ 空方弱勢整理：均線蓋頭")
-    
-    avg_price = (v5 + v10 + v20) / 3
-    if abs(v5-avg_price)/avg_price < 0.02 and abs(v20-avg_price)/avg_price < 0.02:
-        status.append("🌀 均線糾結：變盤在即")
-        
-    if not status:
-        if curr_price > v60: status.append("🌊 多方行進 (觀察)")
-        else: status.append("☁️ 空方盤整 (觀望)")
-
-    return status, need_notify, curr_price, up_count, down_count, v60
-
-# --- 關鍵修正：加入快取機制 (Caching) ---
-# ttl=900 代表資料會被記住 15 分鐘，期間內重複查詢不會再向 Yahoo 發請求
-@st.cache_data(ttl=900)
-def fetch_stock_data(symbol):
-    pure_code = symbol.strip().upper()
-    if not pure_code: return None, None, "空代號"
-
-    # 先試 .TW
-    target_symbol = f"{pure_code}.TW"
-    # 使用 yf.download 替代 Ticker，並關閉進度條
-    df = yf.download(target_symbol, period="1y", progress=False)
-    
-    # 如果抓不到或資料全空，改試 .TWO
-    if df.empty:
-        target_symbol = f"{pure_code}.TWO"
-        df = yf.download(target_symbol, period="1y", progress=False)
-    
-    return df, target_symbol, pure_code
 
 # 設定頁面與標題
 st.set_page_config(page_title="全方位戰略監控系統", layout="wide")
@@ -172,20 +63,159 @@ try:
 
     run_button = st.sidebar.button("立即執行判讀")
 
+    # --- 核心判讀邏輯 ---
+    def check_strategy(df):
+        close = df['Close']
+        volume = df['Volume']
+        
+        curr_price = close.iloc[-1]
+        prev_price = close.iloc[-2]
+        curr_vol = volume.iloc[-1]
+        prev_vol = volume.iloc[-2]
+        pct_change = (curr_price - prev_price) / prev_price
+        
+        price_4_days_ago = close.iloc[-5] 
+        
+        s3 = close.rolling(3).mean()
+        s5 = close.rolling(5).mean()
+        s10 = close.rolling(10).mean()
+        s20 = close.rolling(20).mean()
+        s60 = close.rolling(60).mean() 
+        s240 = close.rolling(240).mean()
+        
+        v240 = s240.iloc[-1] if len(close) >= 240 else s60.iloc[-1]
+        v60 = s60.iloc[-1]
+        p60 = s60.iloc[-2]
+        v5, v10, v20 = s5.iloc[-1], s10.iloc[-1], s20.iloc[-1]
+        p5, p10, p20 = s5.iloc[-2], s10.iloc[-2], s20.iloc[-2]
+        v3 = s3.iloc[-1]
+
+        trend_up = {5: v5 > p5, 10: v10 > p10, 20: v20 > p20, 60: v60 > p60}
+        up_count = sum([trend_up[5], trend_up[10], trend_up[20], trend_up[60]])
+        down_count = 4 - up_count
+        
+        status = []
+        need_notify = False
+        
+        # 1. 重大轉折訊號
+        if prev_price > p60 and curr_price < v60:
+            status.append("📉 轉空警示：跌破季線(60SMA)")
+            need_notify = True
+        elif prev_price < p60 and curr_price > v60:
+            status.append("🚀 轉多訊號：站上季線(60SMA)")
+            need_notify = True
+            
+        # 2. 強勢反彈
+        if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > v3:
+            status.append("🔥 強勢反彈 (漲>4%, 爆量1.5倍, 站上3SMA)")
+            need_notify = True
+            
+        # 3. 底部轉折
+        if up_count >= 2 and curr_price <= v60 * 1.1:
+            status.append(f"✨ 底部轉折：{up_count}條均線翻揚")
+            need_notify = True
+
+        # 4. 出貨警訊
+        cond_sell_a = (curr_vol > prev_vol * 1.3 and pct_change < 0)
+        cond_sell_b = (curr_price < price_4_days_ago)
+        
+        if cond_sell_a or cond_sell_b:
+            reasons = []
+            if cond_sell_a: reasons.append("爆量收黑")
+            if cond_sell_b: reasons.append("跌破4日價")
+            status.append(f"⚠️ 出貨警訊 ({'+'.join(reasons)})")
+            need_notify = True
+
+        # 5. 量價背離
+        if curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
+            status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
+            need_notify = True
+
+        # 6. 關鍵位置
+        dist_240 = abs(curr_price - v240) / v240
+        if dist_240 < 0.05 and down_count >= 3:
+            status.append("⚠️ 年線保衛戰：均線偏弱")
+            need_notify = True 
+        elif curr_price < v240 and down_count >= 3:
+            status.append("❄️ 空方弱勢整理：均線蓋頭")
+        
+        avg_price = (v5 + v10 + v20) / 3
+        if abs(v5-avg_price)/avg_price < 0.02 and abs(v20-avg_price)/avg_price < 0.02:
+            status.append("🌀 均線糾結：變盤在即")
+            
+        if not status:
+            if curr_price > v60: status.append("🌊 多方行進 (觀察)")
+            else: status.append("☁️ 空方盤整 (觀望)")
+
+        return status, need_notify, curr_price, up_count, down_count, v60
+
+    # === 優化版：減少API呼叫，避免被封鎖 ===
+    def analyze_stock(symbol):
+        try:
+            pure_code = symbol.strip().upper()
+            if not pure_code: return None 
+
+            # 策略：直接嘗試 .TW，如果失敗再試 .TWO
+            # 這樣可以減少一半的 Request
+            target_symbol = f"{pure_code}.TW"
+            
+            # 直接抓歷史資料 (這是最耗效能的一步)
+            stock = yf.Ticker(target_symbol)
+            df = stock.history(period="1y")
+            
+            # 如果抓不到 (.TW 失敗)，嘗試 .TWO
+            if df.empty:
+                target_symbol = f"{pure_code}.TWO"
+                stock = yf.Ticker(target_symbol)
+                df = stock.history(period="1y")
+            
+            # 還是空的？那就是真的沒資料或網路被擋
+            if df.empty or len(df) < 60: 
+                return {"代號": symbol, "公司名稱": "無資料", "現價": 0, "狀態": "❌", "需要通知": False, "回報文字": ""}
+            
+            # 嘗試取得名稱，若失敗則用代號
+            try:
+                ch_name = STOCK_NAMES.get(pure_code, stock.info.get('shortName', target_symbol))
+            except:
+                ch_name = STOCK_NAMES.get(pure_code, target_symbol)
+            
+            status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
+            status_text = " | ".join(status_list)
+            
+            report_text = ""
+            if need_notify:
+                report_text = (f"【{ch_name} ({target_symbol})】\n"
+                               f"現價: {price:.2f} (季線: {v60:.1f})\n"
+                               f"訊號: {status_text}\n"
+                               f"------------------------------\n")
+
+            return {
+                "代號": target_symbol,
+                "公司名稱": ch_name,
+                "現價": round(price, 2),
+                "均線狀態": f"⬆️{up_cnt} / ⬇️{down_cnt}",
+                "戰略訊號": status_text,
+                "需要通知": need_notify,
+                "回報文字": report_text
+            }
+        except Exception as e:
+            # 發生例外也不要讓程式崩潰，回傳錯誤資訊
+            return {"代號": symbol, "公司名稱": "連線錯誤", "現價": 0, "狀態": "❌", "需要通知": False, "回報文字": ""}
+
     if run_button:
         if not MY_GMAIL or not MY_PWD:
-            st.error("請檢查 Secrets 設定！無法讀取 GMAIL 帳號密碼。")
+            st.error("請檢查 Secrets 設定！")
         elif not friend_email:
             st.warning("請填寫接收通知的 Email。")
         else:
-            # 處理分隔符號
+            # 處理分隔符號 (中文逗號、空白、分號、頓號)
             raw_tickers = re.split(r'[,\s;，、]+', ticker_input)
             tickers = list(dict.fromkeys([t.strip() for t in raw_tickers if t.strip()]))
             
             results = []
             notify_list = []
             
-            st.write(f"📊 成功辨識 {len(tickers)} 檔股票，正在抓取資料 (快取模式)...")
+            st.write(f"📊 成功辨識 {len(tickers)} 檔股票，正在連線抓取 (請稍候)...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -193,47 +223,19 @@ try:
             for i, t in enumerate(tickers):
                 status_text.text(f"分析進度 ({i+1}/{total_tickers}): {t} ...")
                 
-                # 呼叫有快取的下載函數
-                df, target_symbol, pure_code = fetch_stock_data(t)
+                res = analyze_stock(t)
                 
-                if df is not None and not df.empty and len(df) >= 60:
-                    try:
-                        # 處理 MultiIndex Column 問題 (yf.download 會有這問題)
-                        if isinstance(df.columns, pd.MultiIndex):
-                            df.columns = df.columns.droplevel(1)
-                            
-                        # 取得名稱
-                        ch_name = STOCK_NAMES.get(pure_code, target_symbol)
-                        
-                        # 執行策略
-                        status_list, need_notify, price, up_cnt, down_cnt, v60 = check_strategy(df)
-                        status_text_str = " | ".join(status_list)
-                        
-                        report_text = ""
-                        if need_notify:
-                            report_text = (f"【{ch_name} ({target_symbol})】\n"
-                                           f"現價: {price:.2f} (季線: {v60:.1f})\n"
-                                           f"訊號: {status_text_str}\n"
-                                           f"------------------------------\n")
-
-                        results.append({
-                            "代號": target_symbol,
-                            "公司名稱": ch_name,
-                            "現價": round(price, 2),
-                            "均線狀態": f"⬆️{up_cnt} / ⬇️{down_cnt}",
-                            "戰略訊號": status_text_str,
-                            "需要通知": need_notify,
-                            "回報文字": report_text
-                        })
-                        if need_notify:
-                            notify_list.append(report_text)
-                            
-                    except Exception as e:
-                        print(f"Error processing {target_symbol}: {e}")
+                # 只有抓到資料才顯示
+                if res and res["現價"] > 0:
+                    results.append(res)
+                    if res["需要通知"]:
+                        notify_list.append(res["回報文字"])
                 
                 progress_bar.progress((i + 1) / total_tickers)
-                # 即使有快取，還是稍微休息一下比較保險，但可以縮短時間
-                time.sleep(0.1)
+                
+                # === 關鍵：增加休息時間 ===
+                # 避免被 Yahoo 判定為機器人，每支股票休息 0.25 秒
+                time.sleep(0.25)
                 
             status_text.text("✅ 全部分析完成！")
             
@@ -254,7 +256,7 @@ try:
                 else:
                     st.info("目前持股走勢平穩，無特殊警示。")
             else:
-                st.warning("未找到有效股票。請稍後再試，或檢查 Yahoo Finance 連線。")
+                st.warning("未找到有效股票。可能原因：Yahoo Finance 暫時阻擋了連線，請稍後再試。")
 
 except Exception as e:
     st.error(f"程式發生錯誤：{e}")
