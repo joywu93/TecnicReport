@@ -15,7 +15,8 @@ STOCK_NAMES = {
     "6788": "華景電", "2344": "華邦電", "1519": "華城", "1513": "中興電", "3231": "緯創", "3035": "智原",
     "2408": "南亞科", "3406": "玉晶光", "2368": "金像電", "4979": "華星光", "3163": "波若威", "1326": "台化",
     "3491": "昇達科", "6143": "振曜", "2383": "台光電", "5225": "東科-KY", "3526": "凡甲", "6197": "佳必琪",
-    "8299": "群聯", "8069": "元太", "3037": "欣興", "8046": "南電", "4977": "眾達-KY", "3455": "由田"
+    "8299": "群聯", "8069": "元太", "3037": "欣興", "8046": "南電", "4977": "眾達-KY", "3455": "由田",
+    "8271": "宇瞻"
 }
 
 # --- 2. Email 發送函數 ---
@@ -37,54 +38,45 @@ def send_email_batch(sender, pwd, receivers, subject, body):
 st.set_page_config(page_title="全方位戰略監控系統", layout="wide")
 st.title("📈 股市戰略轉折 & 自動提示分析")
 
-# 加入錯誤處理，避免白畫面
 try:
     # 後台 Secrets 讀取
     MY_GMAIL = st.secrets.get("GMAIL_USER", "")
     MY_PWD = st.secrets.get("GMAIL_PASSWORD", "")
-    MY_PRIVATE_LIST = st.secrets.get("MY_LIST", "2330, 2317") # 預設值
+    MY_PRIVATE_LIST = st.secrets.get("MY_LIST", "2330, 2317") 
 
     st.sidebar.header("👤 使用者設定")
-    
-    # 這裡使用簡單的輸入框
     friend_email = st.sidebar.text_input("接收通知信箱 (輸入 Email 以載入設定)", placeholder="請輸入您的 Email")
 
-    # --- 穩定版邏輯：透過 Key 強制刷新 ---
-    # 預設顯示範例
+    # 判斷載入清單
     display_tickers = "2330"
-    
-    # 如果 Email 對了，就換成私房清單
     if friend_email.strip() == MY_GMAIL:
         display_tickers = MY_PRIVATE_LIST
 
-    # 這裡的 key=f"area_{friend_email}" 很重要
-    # 當 email 改變時，key 會變，Streamlit 就會重建這個輸入框，確保內容更新
+    # 文字輸入區
     ticker_input = st.sidebar.text_area(
-        "自選股清單 (支援逗號、分號、空白)", 
+        "自選股清單 (支援中文/英文逗號、空白、分號)", 
         value=display_tickers, 
         height=300,
-        key=f"area_{friend_email}", # 關鍵修復：防止卡住
-        help="輸入管理員 Email 後會自動載入專屬清單"
+        key=f"area_{friend_email}", 
+        help="輸入 Email 後會自動載入專屬清單"
     )
 
     run_button = st.sidebar.button("立即執行判讀")
 
-    # --- 3. 核心判讀邏輯 ---
+    # --- 核心判讀邏輯 ---
     def check_strategy(df):
         close = df['Close']
         volume = df['Volume']
         
-        # 取得數據
         curr_price = close.iloc[-1]
         prev_price = close.iloc[-2]
         curr_vol = volume.iloc[-1]
         prev_vol = volume.iloc[-2]
         pct_change = (curr_price - prev_price) / prev_price
         
-        # 計算 4天前收盤價 (用於出貨判斷)
+        # 計算 4天前收盤價
         price_4_days_ago = close.iloc[-5] 
         
-        # 計算均線
         s3 = close.rolling(3).mean()
         s5 = close.rolling(5).mean()
         s10 = close.rolling(10).mean()
@@ -106,8 +98,7 @@ try:
         status = []
         need_notify = False
         
-        # === A. 重大轉折訊號 ===
-        # 1. 跌破/站上 60SMA
+        # 1. 重大轉折訊號
         if prev_price > p60 and curr_price < v60:
             status.append("📉 轉空警示：跌破季線(60SMA)")
             need_notify = True
@@ -115,7 +106,7 @@ try:
             status.append("🚀 轉多訊號：站上季線(60SMA)")
             need_notify = True
             
-        # 2. 強勢反彈 (漲>4%, 量>1.5倍, 且 價>3SMA)
+        # 2. 強勢反彈 (修正：漲>4%, 量>1.5倍, 且 價>3SMA)
         if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > v3:
             status.append("🔥 強勢反彈 (漲>4%, 爆量1.5倍, 站上3SMA)")
             need_notify = True
@@ -133,8 +124,7 @@ try:
             reasons = []
             if cond_sell_a: reasons.append("爆量收黑")
             if cond_sell_b: reasons.append("跌破4日價")
-            reason_str = "+".join(reasons)
-            status.append(f"⚠️ 出貨警訊 ({reason_str})")
+            status.append(f"⚠️ 出貨警訊 ({'+'.join(reasons)})")
             need_notify = True
 
         # 5. 量價背離
@@ -142,7 +132,7 @@ try:
             status.append("⚠️ 量價背離 (量增價弱，破5SMA)")
             need_notify = True
 
-        # === B. 關鍵位置 ===
+        # 6. 關鍵位置
         dist_240 = abs(curr_price - v240) / v240
         if dist_240 < 0.05 and down_count >= 3:
             status.append("⚠️ 年線保衛戰：均線偏弱，提防長黑破線")
@@ -154,7 +144,6 @@ try:
         if abs(v5-avg_price)/avg_price < 0.02 and abs(v20-avg_price)/avg_price < 0.02:
             status.append("🌀 均線糾結：變盤在即，留意方向")
             
-        # C. 預設狀態
         if not status:
             if curr_price > v60: status.append("🌊 多方行進 (觀察)")
             else: status.append("☁️ 空方盤整 (觀望)")
@@ -214,13 +203,17 @@ try:
         elif not friend_email:
             st.warning("請填寫接收通知的 Email。")
         else:
-            raw_tickers = re.split(r'[,\s;]+', ticker_input)
-            tickers = list(dict.fromkeys([t for t in raw_tickers if t]))
+            # === 關鍵修改：增強版分隔符處理 ===
+            # 支援：逗號(,), 全形逗號(，), 頓號(、), 分號(;), 空白(\s)
+            raw_tickers = re.split(r'[,\s;，、]+', ticker_input)
+            
+            # 去除空白並去重複
+            tickers = list(dict.fromkeys([t.strip() for t in raw_tickers if t.strip()]))
             
             results = []
             notify_list = []
             
-            st.write(f"📊 共偵測到 {len(tickers)} 檔股票，開始分析...")
+            st.write(f"📊 成功辨識 {len(tickers)} 檔股票，開始分析...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -257,4 +250,4 @@ try:
                 st.warning("未找到有效股票。")
 
 except Exception as e:
-    st.error(f"程式發生錯誤，請檢查設定或稍後再試。錯誤訊息: {e}")
+    st.error(f"程式發生錯誤：{e}")
