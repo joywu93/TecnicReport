@@ -12,29 +12,18 @@ import random
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 隱形戰機版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 最終重試版", layout="wide")
 
-# --- 1. 隨機偽裝表頭 (防封鎖關鍵) ---
+# 更多樣化的偽裝身分
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/118.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1"
 ]
 
-def get_session():
-    session = requests.Session()
-    # 隨機挑選一個瀏覽器身分
-    agent = random.choice(USER_AGENTS)
-    session.headers.update({
-        "User-Agent": agent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive"
-    })
-    return session
-
-# --- 2. 中文名稱對照表 ---
+# --- 1. 中文名稱對照表 ---
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "6203": "海韻電", "3570": "大塚", "4766": "南寶", "NVDA": "輝達",
     "2313": "華通", "2454": "聯發科", "2303": "聯電", "2603": "長榮", "2609": "陽明", "2615": "萬海",
@@ -46,7 +35,7 @@ STOCK_NAMES = {
     "8271": "宇瞻", "5439": "高技"
 }
 
-# --- 3. 安全讀取設定 ---
+# --- 2. 安全讀取設定 ---
 def get_config(key, default_value):
     val = os.environ.get(key)
     if val: return val
@@ -59,7 +48,7 @@ MY_GMAIL = get_config("GMAIL_USER", "")
 MY_PWD = get_config("GMAIL_PASSWORD", "")
 MY_PRIVATE_LIST = get_config("MY_LIST", "2330") 
 
-# --- 4. Email 發送函數 ---
+# --- 3. Email 發送函數 ---
 def send_email_batch(sender, pwd, receivers, subject, body):
     if not sender or not pwd: return False
     try:
@@ -74,11 +63,9 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception:
         return False
 
-# --- 5. 核心判讀邏輯 (專家算式：交易日推算) ---
+# --- 4. 核心判讀邏輯 ---
 def check_strategy(df):
     try:
-        # yfinance 回傳的已經是「交易日」，假日已被剔除
-        # rolling(60) 代表「往前推 60 根 K 棒」，完全符合您的「有資料才算」的要求
         close = df['Close']
         volume = df['Volume']
         close = close.dropna()
@@ -91,18 +78,17 @@ def check_strategy(df):
         curr_vol = volume.iloc[-1]
         prev_vol = volume.iloc[-2]
         
-        # 計算均線
         s3 = close.rolling(3).mean()
         s5 = close.rolling(5).mean()
         s10 = close.rolling(10).mean()
         s20 = close.rolling(20).mean()
-        s60 = close.rolling(60).mean()
+        s60 = close.rolling(60).mean() # 60MA
         
         v60 = s60.iloc[-1]
         p60 = s60.iloc[-2]
         v5, v3 = s5.iloc[-1], s3.iloc[-1]
         
-        # 均線排列狀態
+        # 均線狀態
         trend_up = {
             5: v5 > s5.iloc[-2],
             10: s10.iloc[-1] > s10.iloc[-2],
@@ -116,11 +102,9 @@ def check_strategy(df):
         status = []
         need_notify = False
         
-        # === 乖離率計算 (Bias Rate) ===
-        # 公式：(現價 - 季線) / 季線 * 100
+        # 乖離率
         bias_pct = ((curr_price - v60) / v60) * 100
         
-        # 乖離率分級警示
         if bias_pct >= 30: 
             status.append(f"🔴 乖離率過大 (+{bias_pct:.1f}%)")
             need_notify = True
@@ -128,7 +112,6 @@ def check_strategy(df):
             status.append(f"🔸 乖離率偏高 (+{bias_pct:.1f}%)")
             need_notify = True
             
-        # 策略訊號
         if prev_price > p60 and curr_price < v60:
             status.append("📉 跌破季線")
             need_notify = True
@@ -145,43 +128,56 @@ def check_strategy(df):
         if not status: status.append(f"{trend}盤整")
 
         return status, f"{trend}", curr_price, ma_status_str, bias_pct, need_notify
-    except Exception:
+    except Exception as e:
         return [f"計算錯誤"], "錯誤", 0, "N/A", 0, False
 
-# --- 6. 抓取函數 (帶隨機延遲 + 錯誤回報) ---
-def fetch_one_by_one(ticker):
-    error_msg = ""
-    try:
-        session = get_session() # 每次都換新身分
-        
-        # 1. 抓取 1 年資料 (確保季線運算準確)
-        t = yf.Ticker(f"{ticker}.TW", session=session)
-        df = t.history(period="1y") 
-        if not df.empty and len(df) > 60: return df, f"{ticker}.TW", ""
-        
-        # 2. 失敗則試 TWO
-        t = yf.Ticker(f"{ticker}.TWO", session=session)
-        df = t.history(period="1y")
-        if not df.empty and len(df) > 60: return df, f"{ticker}.TWO", ""
-        
-        error_msg = "查無資料 (空值)"
-        
-    except Exception as e:
-        error_msg = str(e) # 抓出真實錯誤原因
-        
-    return None, None, error_msg
+# --- 5. 抓取函數 (含重試機制 + 快取) ---
+# 使用 ttl=900 (15分鐘快取)，避免短時間重複抓取同一支股票
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_with_retry(ticker):
+    max_retries = 3  # 最多試 3 次
+    
+    for attempt in range(max_retries):
+        try:
+            # 每次換一個 User-Agent
+            session = requests.Session()
+            session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
+            
+            # 嘗試 TW
+            t = yf.Ticker(f"{ticker}.TW", session=session)
+            df = t.history(period="1y")
+            if not df.empty and len(df) > 60: return df, f"{ticker}.TW", ""
+            
+            # 嘗試 TWO
+            t = yf.Ticker(f"{ticker}.TWO", session=session)
+            df = t.history(period="1y")
+            if not df.empty and len(df) > 60: return df, f"{ticker}.TWO", ""
+            
+            # 如果是空值，拋出例外以觸發重試
+            raise ValueError("Empty Data")
+            
+        except Exception as e:
+            # 失敗了，休息一下再試
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(2, 5) # 失敗後等待 2~5 秒
+                time.sleep(wait_time)
+                continue # 繼續下一次迴圈
+            else:
+                return None, None, f"重試{max_retries}次失敗 ({str(e)})"
+                
+    return None, None, "未知錯誤"
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 隱形戰機版")
-st.caption("已啟用隨機延遲技術，掃描速度較慢以避免封鎖。")
+st.title("📈 股市戰略 - 最終重試版")
+st.caption("啟動重試機制：若抓取失敗，系統將自動換身分重試 3 次，請耐心等候。")
 
 use_mobile_view = st.toggle("📱 手機卡片模式", value=True)
 
 with st.sidebar.form(key='stock_form'):
     st.header("設定")
-    friend_email = st.text_input("Email (選填)", placeholder="輸入 Email 以接收通知")
+    friend_email = st.text_input("Email (選填)", placeholder="輸入 Email")
     default_val = MY_PRIVATE_LIST if len(MY_PRIVATE_LIST) > 2 else "2330"
     ticker_input = st.text_area("股票清單", value=default_val, height=250)
     submit_btn = st.form_submit_button(label='🚀 開始執行')
@@ -190,20 +186,18 @@ if submit_btn:
     raw_tickers = re.findall(r'\d{4}', ticker_input)
     user_tickers = list(dict.fromkeys(raw_tickers))
     
-    st.info(f"📊 偵測到 {len(user_tickers)} 檔股票，啟動隱形掃描 (速度會變慢)...")
+    st.info(f"📊 正在分析 {len(user_tickers)} 檔股票...")
     
     results = []
     notify_list = []
     progress_bar = st.progress(0)
-    
-    # 建立一個容器來即時更新狀態
     status_text = st.empty()
     
     for i, t in enumerate(user_tickers):
         status_text.text(f"正在分析 ({i+1}/{len(user_tickers)}): {t} ...")
         
-        # 執行抓取
-        df, final_symbol, err_msg = fetch_one_by_one(t)
+        # 呼叫帶有快取和重試功能的抓取函數
+        df, final_symbol, err_msg = fetch_with_retry(t)
         
         row_data = {
             "序號": i + 1,
@@ -230,9 +224,9 @@ if submit_btn:
         results.append(row_data)
         progress_bar.progress((i + 1) / len(user_tickers))
         
-        # === 關鍵：隨機休息 1~3 秒 ===
-        # 這是為了看起來像真人在操作，避免被 Yahoo 鎖 IP
-        time.sleep(random.uniform(1.0, 3.0))
+        # 成功後也要稍微休息，避免太快打下一支
+        if df is not None:
+            time.sleep(random.uniform(0.5, 1.5))
         
     status_text.text("✅ 分析完成！")
     
@@ -243,9 +237,9 @@ if submit_btn:
             border = "1px solid #ddd"
             bg_color = "#ffffff"
             
-            if "🔴" in row['訊號']: border = "2px solid #dc3545" # 紅
-            elif "🔸" in row['訊號']: border = "2px solid #ffc107" # 黃
-            elif "🚀" in row['訊號'] or "🔥" in row['訊號']: border = "2px solid #28a745" # 綠
+            if "🔴" in row['訊號']: border = "2px solid #dc3545" 
+            elif "🔸" in row['訊號']: border = "2px solid #ffc107"
+            elif "🚀" in row['訊號'] or "🔥" in row['訊號']: border = "2px solid #28a745"
             
             bias_color = "black"
             if row['乖離'] >= 20: bias_color = "#dc3545"
