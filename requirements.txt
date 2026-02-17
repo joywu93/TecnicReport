@@ -1,6 +1,6 @@
 streamlit
 yfinance
 twstock
-pandas
-requests
 lxml
+requests
+pandas
