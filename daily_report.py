@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
 # ==========================================
-# 🔧 設定監控清單
+# 🔧 設定監控清單 (您的 32 檔股票)
 # ==========================================
 TARGET_TICKERS = [
     "2330", "2317", "2323", "2451", "6229", "4763", "1522", "2404", "6788", "2344",
@@ -15,7 +15,7 @@ TARGET_TICKERS = [
     "2408", "8271", "5439"
 ]
 
-# 取得環境變數
+# 取得環境變數 (GitHub Secrets)
 MY_GMAIL = os.environ.get("GMAIL_USER")
 MY_PWD = os.environ.get("GMAIL_PASSWORD")
 RECEIVERS = [MY_GMAIL]
@@ -47,14 +47,13 @@ def analyze_stock(ticker):
         name = real['info']['name']
         latest_price = real['realtime']['latest_trade_price']
         
-        # 剛開盤可能無成交價，改用買一價或開盤價
+        # 處理剛開盤無成交價的情況
         if not latest_price or latest_price == '-':
              if real['realtime']['best_bid_price']:
                  latest_price = real['realtime']['best_bid_price'][0]
              else:
                  latest_price = real['realtime']['open']
 
-        # 轉成浮點數，如果還是抓不到就跳過
         try:
             current_price = float(latest_price)
         except:
@@ -72,15 +71,15 @@ def analyze_stock(ticker):
         status = []
         need_notify = False
         
-        # === 乖離率計算 (修正為您的標準) ===
+        # === 乖離率計算 (您的核心要求) ===
         bias_pct = ((current_price - ma60) / ma60) * 100
         
-        # A. 嚴重警示：1.3倍 (乖離 > 30%) -> 您的指定標準
+        # A. 嚴重警示：1.3倍 (乖離 > 30%)
         if current_price >= ma60 * 1.3:
              status.append(f"🔥⚠️ 乖離過大 (+{bias_pct:.1f}%)")
              need_notify = True
              
-        # B. 預警觀察：1.15倍 (乖離 > 15%) -> 提早提醒
+        # B. 預警觀察：1.15倍 (乖離 > 15%)
         elif current_price >= ma60 * 1.15:
              status.append(f"🔸 乖離偏高 (+{bias_pct:.1f}%)")
              need_notify = True
@@ -103,6 +102,7 @@ def analyze_stock(ticker):
         return None, False
 
 def main():
+    # 取得台灣時間
     utc_now = datetime.now(timezone.utc)
     tw_now = utc_now + timedelta(hours=8)
     time_str = tw_now.strftime('%H:%M')
