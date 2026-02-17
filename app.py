@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 智能完全體", layout="wide")
+st.set_page_config(page_title="股市戰略 - 客製化戰略版", layout="wide")
 
 # 中文對照表
 STOCK_NAMES = {
@@ -41,14 +41,14 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception:
         return False
 
-# --- 核心邏輯：全方位戰略分析 ---
+# --- 核心邏輯：客製化戰略分析 ---
 def analyze_strategy(df):
     # 準備數據
     close = df['Close']
     volume = df['Volume']
     
     # 至少需要 240 天 (年線)
-    if len(close) < 240: return "資料不足 (上市未滿一年)", 0, 0, False
+    if len(close) < 240: return "資料不足", 0, 0, "", False
 
     # 取得最新與前一日數據
     curr_price = close.iloc[-1]
@@ -56,7 +56,6 @@ def analyze_strategy(df):
     curr_vol = volume.iloc[-1]
     prev_vol = volume.iloc[-2]
     
-    # 計算漲跌幅
     pct_change = (curr_price - prev_price) / prev_price
     
     # 計算均線 (SMA)
@@ -67,19 +66,18 @@ def analyze_strategy(df):
     sma60 = close.rolling(60).mean()
     sma240 = close.rolling(240).mean()
     
-    # 取值
+    # 取值 (v=今日, p=昨日)
     v5, v10, v20 = sma5.iloc[-1], sma10.iloc[-1], sma20.iloc[-1]
     v60 = sma60.iloc[-1]
     v240 = sma240.iloc[-1]
     
-    # 前一日均線 (判斷趨勢向上/向下)
     p5, p10, p20 = sma5.iloc[-2], sma10.iloc[-2], sma20.iloc[-2]
     p60 = sma60.iloc[-2]
 
     messages = []
-    is_alert = False # 是否為重要訊號 (Email用)
+    is_alert = False # 只要符合您指定的特殊條件，就設為 True (觸發 Email)
 
-    # --- 1. 乖離率 (您的核心要求，優先顯示) ---
+    # --- 1. 乖離率優先檢查 ---
     bias_val = ((curr_price - v60) / v60) * 100
     bias_msg = ""
     if bias_val >= 30:
@@ -89,71 +87,61 @@ def analyze_strategy(df):
         bias_msg = f"🔸 乖離偏高 (MA60: {v60:.1f})"
         is_alert = True
 
-    # --- 2. 季線多空轉折 ---
-    prev_60 = sma60.iloc[-2]
-    if prev_price < prev_60 and curr_price > v60:
-        messages.append("🚀 轉多訊號：站上季線")
-        is_alert = True
-    elif prev_price > prev_60 and curr_price < v60:
-        messages.append("📉 轉空警示：跌破季線")
-        is_alert = True
+    # ====== 您的指定戰略邏輯 (優先順序高) ======
 
-    # --- 3. 強勢反彈 (漲>4% 且 爆量1.5倍) ---
-    # 條件：漲幅 >= 4% 且 量 > 昨日1.5倍 且 價 > 3MA
-    if pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > sma3:
-        messages.append("🔥 強勢反彈 (爆量長紅)")
-        is_alert = True
-
-    # --- 4. 底部轉折 (均線翻揚) ---
-    # 條件：5/10/20/60 有 2條以上向上 且 股價在低檔 (<= 季線*1.1)
-    up_count = 0
-    if v5 > p5: up_count += 1
-    if v10 > p10: up_count += 1
-    if v20 > p20: up_count += 1
-    if v60 > p60: up_count += 1
+    # 情境 1: 多方回檔 (類似 2451, 6788)
+    # 條件: 股價>季線 (中多方) 且 5/10/20 有2支以上向下 且 離季線很近 (<5%)
+    short_term_down_count = 0
+    if v5 < p5: short_term_down_count += 1
+    if v10 < p10: short_term_down_count += 1
+    if v20 < p20: short_term_down_count += 1
     
-    if up_count >= 2 and curr_price <= v60 * 1.1:
-        messages.append(f"✨ 底部轉折 ({up_count}條均線翻揚)")
+    dist_60 = (curr_price - v60) / v60 # 距離季線幅度
+
+    if curr_price > v60 and short_term_down_count >= 2 and 0 < dist_60 <= 0.05:
+        messages.append("🌊 多方行進(觀察) + ⚠️ 慎防跌破60均線")
         is_alert = True
 
-    # --- 5. 量價異常 (出貨/背離) ---
-    # 出貨：量 > 1.3倍 且 收黑
-    if curr_vol > prev_vol * 1.3 and pct_change < 0:
-        messages.append("⚠️ 出貨警訊 (爆量收黑)")
-        is_alert = True
-    # 背離：量 > 1.2倍 且 破5日線 且 收黑
-    elif curr_vol > prev_vol * 1.2 and curr_price < v5 and pct_change < 0:
-        messages.append("⚠️ 量價背離 (量增價弱)")
+    # 情境 2: 多方強勢防守 (類似 1326, 3491)
+    # 條件: 股價 > 5/10/20 均線 且 5/10/20 均線全部向上
+    elif curr_price > v60 and curr_price > v5 and curr_price > v10 and curr_price > v20 and \
+         v5 > p5 and v10 > p10 and v20 > p20:
+        messages.append(f"🌊 多方行進 + ✨ 短線提防跌破 5MA({v5:.1f}) / 10MA({v10:.1f})")
         is_alert = True
 
-    # --- 6. 年線保衛/空方弱勢 ---
-    # 距離年線 < 5% 且 3條均線向下
-    down_count = 0
-    if v5 < p5: down_count += 1
-    if v10 < p10: down_count += 1
-    if v20 < p20: down_count += 1
+    # 情境 3: 多方偏弱/年線保衛 (類似 3231)
+    # 條件: 股價 < 季線 (一般會被歸類空方盤整) 但 股價 > 年線(240MA)
+    elif curr_price < v60 and curr_price > v240:
+        messages.append("☁️ 多方偏弱 (提防跌破年線轉空)")
+        is_alert = True
     
-    dist_240 = abs(curr_price - v240) / v240
-    if dist_240 < 0.05 and down_count >= 3:
-        messages.append("⚠️ 年線保衛戰 (均線偏弱)")
-        is_alert = True
-    elif curr_price < v240 and down_count >= 3:
-        messages.append("❄️ 空方弱勢整理 (均線蓋頭)")
-    
-    # --- 7. 均線糾結 ---
-    # 5/10/20 差距 < 2%
-    max_ma = max(v5, v10, v20)
-    min_ma = min(v5, v10, v20)
-    if (max_ma - min_ma) / min_ma < 0.02:
-        messages.append("🌀 均線糾結 (變盤在即)")
+    # 情境 4: 多方整理轉折 (類似 8271)
+    # 條件: 股價 > 季線 且 5MA翻揚(今日>昨日) 且 5MA > 10MA
+    elif curr_price > v60 and v5 > p5 and v5 > v10:
+        messages.append("✨ 多方整理轉折 (5MA向上 > 10MA)")
         is_alert = True
 
-    # --- 8. 預設狀態 (如果上面都沒觸發) ---
-    if not messages:
-        if curr_price > v60:
-            messages.append("🌊 多方行進 (觀察)")
+    # ====== 原有通用邏輯 (若未觸發上述特殊情境) ======
+    
+    if not messages: # 如果沒有中上面的特殊條件
+        # 轉多
+        if prev_price < p60 and curr_price > v60:
+            messages.append("🚀 轉多訊號：站上季線")
+            is_alert = True
+        # 轉空
+        elif prev_price > p60 and curr_price < v60:
+            messages.append("📉 轉空警示：跌破季線")
+            is_alert = True
+        # 強勢反彈
+        elif pct_change >= 0.04 and curr_vol > prev_vol * 1.5 and curr_price > sma3:
+            messages.append("🔥 強勢反彈 (漲>4%且爆量)")
+            is_alert = True
+        # 預設狀態
         else:
-            messages.append("☁️ 空方盤整 (觀望)")
+            if curr_price > v60:
+                messages.append("🌊 多方行進 (觀察)")
+            else:
+                messages.append("☁️ 空方盤整 (觀望)")
 
     return " | ".join(messages), curr_price, bias_val, bias_msg, is_alert
 
@@ -167,7 +155,7 @@ def fetch_all_data(user_tickers):
         download_list.append(f"{t}.TWO")
     
     try:
-        # 下載 2 年資料以計算年線
+        # 下載 2 年資料 (為了算年線)
         data = yf.download(download_list, period="2y", group_by='ticker', threads=True, progress=False)
     except Exception:
         return []
@@ -177,7 +165,7 @@ def fetch_all_data(user_tickers):
     for t in user_tickers:
         df = pd.DataFrame()
         
-        # 尋找資料 (TW 或 TWO)
+        # 找資料
         if f"{t}.TW" in data.columns.levels[0]:
             temp = data[f"{t}.TW"]
             if not temp['Close'].dropna().empty: df = temp
@@ -190,7 +178,7 @@ def fetch_all_data(user_tickers):
             processed_results.append({"code": t, "name": STOCK_NAMES.get(t, t), "error": "無資料"})
             continue
 
-        # 執行戰略分析
+        # 執行分析
         signal_str, price, bias, bias_str, is_urgent = analyze_strategy(df)
         
         processed_results.append({
@@ -209,7 +197,7 @@ def fetch_all_data(user_tickers):
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 智能完全體")
+st.title("📈 股市戰略 - 客製化戰略版")
 
 # 側邊欄
 with st.sidebar.form(key='stock_form'):
@@ -235,7 +223,7 @@ if submit_btn or refresh_btn:
     raw_tickers = re.findall(r'\d{4}', ticker_input)
     user_tickers = list(dict.fromkeys(raw_tickers))
     
-    st.info(f"正在進行 6 大戰略分析，掃描 {len(user_tickers)} 檔股票...")
+    st.info(f"正在進行客製化戰略分析，掃描 {len(user_tickers)} 檔股票...")
     
     stock_data = fetch_all_data(user_tickers)
     
@@ -245,7 +233,6 @@ if submit_btn or refresh_btn:
     
     st.subheader(f"📊 分析結果 ({len(stock_data)} 檔)")
     
-    # 雙欄排版
     cols = st.columns(2) if len(stock_data) > 1 else [st]
     
     for i, item in enumerate(stock_data):
@@ -261,13 +248,11 @@ if submit_btn or refresh_btn:
             bias_str = item['bias_str']
             signal = item['signal']
             
-            # 顯示卡片
             with st.container(border=True):
                 c1, c2 = st.columns([2, 1])
                 c1.markdown(f"#### {item['name']} `{item['code']}`")
                 c2.markdown(f"#### ${price:.1f}")
                 
-                # 乖離率 (顏色判斷)
                 if bias_val >= 15:
                     st.markdown(f"乖離率：:red[**{bias_val:.1f}%**]")
                 else:
@@ -275,29 +260,30 @@ if submit_btn or refresh_btn:
                 
                 st.divider()
                 
-                # 顯示戰略訊號 (綠色/灰色)
-                if "多方" in signal or "轉多" in signal or "反彈" in signal or "翻揚" in signal:
+                # 顯示訊號
+                if "轉折" in signal or "反彈" in signal or "強勢" in signal:
                      st.markdown(f":green[{signal}]")
-                elif "空方" in signal or "轉空" in signal or "出貨" in signal or "弱勢" in signal:
+                elif "偏弱" in signal or "轉空" in signal or "跌破" in signal:
                      st.markdown(f":grey[{signal}]")
                 else:
                      st.markdown(signal)
 
-                # 疊加顯示乖離警示 (如果有)
                 if bias_str:
                     if "過大" in bias_str:
                         st.error(bias_str)
                     else:
                         st.warning(bias_str)
 
-            # 收集 Email (只有重要訊號或有乖離警示才寄)
+            # 只要是您指定的戰略訊號，都視為 Urgent，加入通知列表
             if item['is_urgent']:
                 full_msg = f"{signal} | {bias_str}"
-                notify_list.append(f"【{item['name']}】${price} | 乖離{bias_val:.1f}% | {full_msg}")
+                notify_list.append(f"【{item['name']}】${price} | {full_msg}")
 
     # 發信
     if notify_list and email_input and MY_GMAIL:
-        st.info(f"📧 偵測到 {len(notify_list)} 則重要訊號，正在發送 Email...")
+        st.info(f"📧 偵測到 {len(notify_list)} 則戰略訊號，正在發送 Email...")
         body = "\n\n".join(notify_list)
-        if send_email_batch(MY_GMAIL, MY_PWD, [email_input], "股市戰略警示", body):
+        if send_email_batch(MY_GMAIL, MY_PWD, [email_input], "股市戰略通知", body):
             st.success("✅ Email 發送成功！")
+        else:
+            st.error("❌ Email 發送失敗 (請檢查 Secrets 設定)")
