@@ -2,16 +2,18 @@ name: Daily Stock Report
 
 on:
   schedule:
-    # 這裡設定時間 (UTC 時間)
-    # 台灣時間 = UTC + 8
-    # 所以如果您想在台灣時間「下午 3:30 (15:30)」執行：
-    # 計算公式：15 - 8 = 7，30分照填 --> '30 7 * * 1-5'
-    - cron: '30 7 * * 1-5' # 目前設定為台灣時間週一至週五 15:30
-    
-  workflow_dispatch: # 這一行讓您可以手動點擊按鈕來測試
+    # GitHub 使用 UTC 時間
+    # 台灣 10:00 = UTC 02:00
+    # 台灣 13:00 = UTC 05:00
+    # 設定週一到週五執行
+    - cron: '0 2 * * 1-5'
+    - cron: '0 5 * * 1-5'
+  
+  # 允許手動按鈕執行 (方便測試)
+  workflow_dispatch:
 
 jobs:
-  run-script:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,11 +27,11 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install yfinance pandas
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-    - name: Run daily report
+    - name: Run Report Script
       env:
-        # 這裡會自動去抓您在 Secrets 設定的帳密
         GMAIL_USER: ${{ secrets.GMAIL_USER }}
         GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
       run: python daily_report.py
