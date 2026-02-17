@@ -5,9 +5,7 @@ import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
-# ==========================================
-# 🔧 設定監控清單 (您的 32 檔股票)
-# ==========================================
+# 監控清單
 TARGET_TICKERS = [
     "2330", "2317", "2323", "2451", "6229", "4763", "1522", "2404", "6788", "2344",
     "2368", "4979", "3163", "1326", "3491", "6143", "2383", "2454", "5225", "3526",
@@ -15,14 +13,13 @@ TARGET_TICKERS = [
     "2408", "8271", "5439"
 ]
 
-# 取得環境變數 (GitHub Secrets)
 MY_GMAIL = os.environ.get("GMAIL_USER")
 MY_PWD = os.environ.get("GMAIL_PASSWORD")
 RECEIVERS = [MY_GMAIL]
 
 def send_email_batch(subject, body):
     if not MY_GMAIL or not MY_PWD:
-        print("❌ 找不到帳號密碼，無法寄信")
+        print("❌ 沒帳密")
         return False
     try:
         msg = MIMEText(body)
@@ -32,22 +29,21 @@ def send_email_batch(subject, body):
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(MY_GMAIL, MY_PWD)
             server.send_message(msg)
-        print("✅ 信件發送成功")
+        print("✅ 寄信成功")
         return True
     except Exception as e:
-        print(f"❌ 發信失敗: {e}")
+        print(f"❌ 寄信失敗: {e}")
         return False
 
 def analyze_stock(ticker):
     try:
-        # 1. 抓取即時股價 (Realtime)
+        # 1. 抓即時
         real = twstock.realtime.get(ticker)
         if not real['success']: return None
         
         name = real['info']['name']
         latest_price = real['realtime']['latest_trade_price']
         
-        # 處理剛開盤無成交價的情況
         if not latest_price or latest_price == '-':
              if real['realtime']['best_bid_price']:
                  latest_price = real['realtime']['best_bid_price'][0]
@@ -59,71 +55,64 @@ def analyze_stock(ticker):
         except:
             return None
         
-        # 2. 抓取歷史資料 (History) 算 60MA
+        # 2. 抓歷史算 60MA
         stock = twstock.Stock(ticker)
-        price_history = stock.price[-60:] 
+        # 抓多一點確保夠算
+        price_history = stock.price[-70:] 
         
         if len(price_history) < 60:
             ma60 = current_price 
         else:
-            ma60 = sum(price_history) / 60
+            # 取最後60筆
+            ma60 = sum(price_history[-60:]) / 60
             
         status = []
-        need_notify = False
         
-        # === 乖離率計算 (您的核心要求) ===
+        # === 乖離率核心邏輯 (完全照您的要求) ===
         bias_pct = ((current_price - ma60) / ma60) * 100
         
-        # A. 嚴重警示：1.3倍 (乖離 > 30%)
-        if current_price >= ma60 * 1.3:
+        # 條件 A: > 30% (1.3倍)
+        if bias_pct >= 30:
              status.append(f"🔥⚠️ 乖離過大 (+{bias_pct:.1f}%)")
-             need_notify = True
              
-        # B. 預警觀察：1.15倍 (乖離 > 15%)
-        elif current_price >= ma60 * 1.15:
+        # 條件 B: > 15% (1.15倍)
+        elif bias_pct >= 15:
              status.append(f"🔸 乖離偏高 (+{bias_pct:.1f}%)")
-             need_notify = True
 
-        # 均線邏輯
+        # 均線趨勢
         if current_price > ma60:
             trend = "多方"
         else:
             trend = "空方"
             status.append("📉 季線之下")
-            need_notify = True 
 
         if not status:
             status.append(f"{trend}行進")
 
-        return f"【{name} ({ticker})】${current_price} | MA60:{round(ma60,1)} | {' '.join(status)}", need_notify
+        return f"【{name} ({ticker})】${current_price} | MA60:{round(ma60,1)} | {' '.join(status)}"
 
     except Exception as e:
-        print(f"處理 {ticker} 發生錯誤: {e}")
-        return None, False
+        print(f"Error {ticker}: {e}")
+        return None
 
 def main():
-    # 取得台灣時間
     utc_now = datetime.now(timezone.utc)
     tw_now = utc_now + timedelta(hours=8)
     time_str = tw_now.strftime('%H:%M')
     
-    print(f"🚀 開始執行 TWSE 掃描任務 {time_str} ...")
-    
+    print(f"🚀 開始執行 ({time_str}) ...")
     report_lines = []
     
     for ticker in TARGET_TICKERS:
-        result_text, is_urgent = analyze_stock(ticker)
-        if result_text:
-            print(result_text)
-            report_lines.append(result_text)
-            
-        time.sleep(1) # 禮貌性停頓
+        res = analyze_stock(ticker)
+        if res:
+            print(res)
+            report_lines.append(res)
+        time.sleep(1) 
 
     if report_lines:
-        mail_body = f"股市戰略報告 ({time_str})\n\n" + "\n".join(report_lines)
+        mail_body = "\n".join(report_lines)
         send_email_batch(f"【{time_str}】股市戰略通知", mail_body)
-    else:
-        print("無資料")
 
 if __name__ == "__main__":
     main()
