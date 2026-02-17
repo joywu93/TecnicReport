@@ -3,15 +3,11 @@ import yfinance as yf
 import pandas as pd
 import time
 import re
-import os
-import requests
-import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 極速並行版", layout="wide")
+st.set_page_config(page_title="股市戰略 - Streamlit 專用版", layout="wide")
 
 # 中文對照表
 STOCK_NAMES = {
@@ -25,175 +21,152 @@ STOCK_NAMES = {
     "8271": "宇瞻", "5439": "高技"
 }
 
-# 讀取環境變數
-MY_PRIVATE_LIST = os.environ.get("MY_LIST", "2330") 
+# 預設清單
+DEFAULT_LIST = "2330, 2317, 2323, 2451, 6229, 4763, 1522, 2404, 6788, 2344, 2368, 4979, 3163, 1326, 3491, 6143, 2383, 2454, 5225, 3526, 6197, 6203, 3570, 3231, 8299, 8069, 3037, 8046, 4977, 3455, 2408, 8271, 5439"
 
-# 偽裝標頭 (隨機切換)
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15"
-]
-
-# --- 核心邏輯：單支股票分析函數 ---
-def analyze_stock(ticker):
-    try:
-        # 隨機延遲一點點，避免多線程同時撞牆
-        time.sleep(random.uniform(0.1, 0.5))
-        
-        session = requests.Session()
-        session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
-        
-        # 優先嘗試 .TW，失敗試 .TWO
-        stock_id = f"{ticker}.TW"
-        df = yf.Ticker(stock_id, session=session).history(period="1y")
-        
-        if df.empty:
-            stock_id = f"{ticker}.TWO"
-            df = yf.Ticker(stock_id, session=session).history(period="1y")
-        
-        # 如果還是空的，直接回傳錯誤，不要硬算
-        if df.empty:
-            return {
-                "代號": ticker, "名稱": STOCK_NAMES.get(ticker, ticker),
-                "現價": "N/A", "乖離": "N/A", "訊號": "❌ 無法讀取 (IP被擋)"
-            }
-
-        # 確保資料長度足夠
-        close = df['Close']
-        if len(close) < 60:
-             return {
-                "代號": ticker, "名稱": STOCK_NAMES.get(ticker, ticker),
-                "現價": round(close.iloc[-1], 2), "乖離": "N/A", "訊號": "⚠️ 資料不足60天"
-            }
+# --- 核心邏輯：快取抓取函數 (防止頻繁連線) ---
+# ttl=900 代表資料會在記憶體存活 900秒 (15分鐘)
+# 這期間內您重新整理網頁，程式會直接拿記憶體的資料，不會連線 Yahoo，所以不會被擋！
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_stock_data_batch(ticker_list):
+    data_results = []
+    
+    for t in ticker_list:
+        try:
+            # 嘗試 TW
+            stock_id = f"{t}.TW"
+            ticker_obj = yf.Ticker(stock_id)
+            df = ticker_obj.history(period="1y")
             
-        # === 計算數值 ===
-        curr_price = close.iloc[-1]
-        ma60 = close.rolling(60).mean().iloc[-1]
-        
-        # 防呆：如果 MA60 是 NaN (例如停牌剛恢復)
-        if pd.isna(ma60):
-             return {
-                "代號": ticker, "名稱": STOCK_NAMES.get(ticker, ticker),
-                "現價": round(curr_price, 2), "乖離": "N/A", "訊號": "⚠️ 季線計算錯誤"
-            }
-
-        # === 乖離率與策略 ===
-        bias_pct = ((curr_price - ma60) / ma60) * 100
-        
-        status = []
-        # 1. 乖離率警示
-        if bias_pct >= 30:
-            status.append(f"🔥⚠️ 乖離過大 (+{bias_pct:.1f}%)")
-        elif bias_pct >= 15:
-            status.append(f"🔸 乖離偏高 (+{bias_pct:.1f}%)")
+            # 如果 TW 沒資料，改試 TWO
+            if df.empty:
+                stock_id = f"{t}.TWO"
+                ticker_obj = yf.Ticker(stock_id)
+                df = ticker_obj.history(period="1y")
             
-        # 2. 季線趨勢
-        if curr_price > ma60:
-            # 如果乖離率沒有過高，就顯示多方行進
-            if not status: status.append("🚀 多方行進 (季線之上)")
-        else:
-            status.append("📉 跌破季線")
-            
-        return {
-            "代號": ticker,
-            "名稱": STOCK_NAMES.get(ticker, ticker),
-            "現價": round(curr_price, 2),
-            "乖離": round(bias_pct, 1),
-            "訊號": " | ".join(status)
-        }
+            if df.empty or len(df) < 60:
+                data_results.append({
+                    "code": t, "name": STOCK_NAMES.get(t, t),
+                    "price": 0, "ma60": 0, "error": "資料不足"
+                })
+                continue
 
-    except Exception as e:
-        return {
-            "代號": ticker, "名稱": STOCK_NAMES.get(ticker, ticker),
-            "現價": "N/A", "乖離": "N/A", "訊號": "❌ 系統錯誤"
-        }
+            # 計算數據
+            close = df['Close']
+            curr_price = close.iloc[-1]
+            ma60 = close.rolling(60).mean().iloc[-1]
+            
+            data_results.append({
+                "code": t,
+                "name": STOCK_NAMES.get(t, t),
+                "price": float(curr_price),
+                "ma60": float(ma60),
+                "error": None
+            })
+            
+            # 稍微停頓一下，雖然有快取，但第一次抓還是溫柔點
+            time.sleep(0.1)
+            
+        except Exception as e:
+            data_results.append({
+                "code": t, "name": STOCK_NAMES.get(t, t),
+                "price": 0, "ma60": 0, "error": "讀取錯誤"
+            })
+            
+    return data_results
 
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 極速並行版")
-st.caption("啟用多執行緒 (Multi-threading) 加速運算，大幅縮短等待時間。")
+st.title("📈 股市戰略 - Streamlit 快取版")
+st.info("💡 系統已啟用「15分鐘快取」。第一次載入後，15分鐘內重新整理都不會被擋，且速度極快。")
 
-use_mobile_view = st.toggle("📱 手機卡片模式", value=True)
-
+# 側邊欄
 with st.sidebar.form(key='stock_form'):
     st.header("設定")
-    default_list = MY_PRIVATE_LIST if len(MY_PRIVATE_LIST) > 2 else "2330"
-    ticker_input = st.text_area("股票清單", value=default_list, height=250)
-    submit_btn = st.form_submit_button(label='🚀 開始極速分析')
+    ticker_input = st.text_area("股票清單", value=DEFAULT_LIST, height=300)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        submit_btn = st.form_submit_button(label='🚀 開始分析')
+    with col2:
+        # 強制清除快取按鈕
+        clear_btn = st.form_submit_button(label='🔄 強制更新')
 
-if submit_btn:
+if clear_btn:
+    st.cache_data.clear()
+    st.toast("已清除快取，將重新抓取最新資料！")
+
+if submit_btn or clear_btn:
+    # 解析代號
     raw_tickers = re.findall(r'\d{4}', ticker_input)
-    user_tickers = list(dict.fromkeys(raw_tickers))
+    user_tickers = list(dict.fromkeys(raw_tickers)) # 去重
     
-    st.info(f"啟動 5 核心引擎，正在平行分析 {len(user_tickers)} 檔股票...")
+    with st.spinner(f"正在分析 {len(user_tickers)} 檔股票... (若為第一次執行需稍等)"):
+        # 呼叫快取函數
+        stock_data = fetch_stock_data_batch(user_tickers)
     
-    results = []
-    progress_bar = st.progress(0)
+    st.success(f"分析完成！共 {len(stock_data)} 檔。")
     
-    # === 關鍵：多執行緒並行處理 ===
-    # max_workers=5 代表同時查 5 支，速度提升 5 倍
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # 送出所有任務
-        future_to_ticker = {executor.submit(analyze_stock, t): t for t in user_tickers}
+    # 顯示卡片
+    for item in stock_data:
+        # 錯誤處理
+        if item['error']:
+            st.error(f"{item['name']} ({item['code']}): {item['error']}")
+            continue
+            
+        price = item['price']
+        ma60 = item['ma60']
         
-        count = 0
-        for future in as_completed(future_to_ticker):
-            data = future.result()
-            results.append(data)
+        # === 乖離率計算 ===
+        # 公式：(現價 - 季線) / 季線
+        if ma60 > 0:
+            bias_val = ((price - ma60) / ma60) * 100
+        else:
+            bias_val = 0
             
-            count += 1
-            progress_bar.progress(count / len(user_tickers))
-    
-    # 排序：依照原始輸入順序重新排列，不然多執行緒會亂掉
-    results.sort(key=lambda x: user_tickers.index(x['代號']) if x['代號'] in user_tickers else 999)
-    
-    st.success("✅ 分析完成！")
-    
-    df_res = pd.DataFrame(results)
-    
-    # === 顯示結果 ===
-    if use_mobile_view:
-        for idx, row in df_res.iterrows():
-            # 樣式邏輯
-            border = "1px solid #ddd" # 灰
-            bg_color = "white"
-            
-            signal_str = str(row['訊號'])
-            
-            if "🔥" in signal_str: 
-                border = "2px solid #dc3545" # 紅框
-            elif "🔸" in signal_str: 
-                border = "2px solid #ffc107" # 黃框
-            elif "無法讀取" in signal_str or "系統錯誤" in signal_str:
-                bg_color = "#f8f9fa" # 錯誤變灰底
-            elif "🚀" in signal_str: 
-                border = "2px solid #28a745" # 綠框
-
-            # 乖離率顏色
-            bias_val = row['乖離']
-            bias_color = "black"
-            if isinstance(bias_val, (int, float)):
-                if bias_val >= 15: bias_color = "#dc3545"
-                elif bias_val <= -15: bias_color = "#28a745"
-
-            with st.container():
-                st.markdown(f"""
-                <div style="border: {border}; padding: 12px; border-radius: 8px; margin-bottom: 12px; background-color: {bg_color}; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-size: 1.1em; font-weight: bold;">{idx+1}. {row['名稱']}</span>
-                            <span style="color: #666; font-size: 0.9em;"> ({row['代號']})</span>
-                        </div>
-                        <div style="font-size: 1.2em; font-weight: bold;">${row['現價']}</div>
+        # === 訊號判斷 (修正邏輯：優先權最高) ===
+        status_text = ""
+        border_style = "1px solid #ddd" # 預設灰框
+        bias_color = "black"
+        
+        # 1. 優先檢查乖離 (紅燈 > 黃燈)
+        if bias_val >= 30:
+            status_text = f"🔥⚠️ 乖離過大 (+{bias_val:.1f}%)"
+            border_style = "2px solid #dc3545" # 紅框
+            bias_color = "#dc3545" # 紅字
+        elif bias_val >= 15:
+            status_text = f"🔸 乖離偏高 (+{bias_val:.1f}%)"
+            border_style = "2px solid #ffc107" # 黃框
+            bias_color = "#d39e00" # 黃字
+        
+        # 2. 如果沒有乖離警示，才顯示趨勢
+        if status_text == "":
+            if price > ma60:
+                status_text = "🚀 多方行進 (季線之上)"
+                border_style = "2px solid #28a745" # 綠框
+            else:
+                status_text = "📉 季線之下 (整理中)"
+        
+        # === 畫出卡片 ===
+        with st.container():
+            st.markdown(f"""
+            <div style="border: {border_style}; padding: 12px; border-radius: 8px; margin-bottom: 12px; background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="font-size: 1.2em; font-weight: bold;">{item['name']}</span>
+                        <span style="color: #666; font-size: 0.9em;"> ({item['code']})</span>
                     </div>
-                    <div style="margin-top: 8px; font-size: 0.9em; display: flex; justify-content: space-between; border-top: 1px solid #eee; padding-top: 8px;">
-                        <span>乖離率：<span style="color: {bias_color}; font-weight: bold;">{row['乖離']}%</span></span>
-                    </div>
-                    <div style="margin-top: 5px; font-weight: bold; font-size: 0.95em; color: #333;">
-                        {row['訊號']}
-                    </div>
+                    <div style="font-size: 1.3em; font-weight: bold;">${price}</div>
                 </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.dataframe(df_res, use_container_width=True)
+                
+                <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 0.95em; color: #444; border-top: 1px solid #eee; padding-top: 8px;">
+                    <span>季線(60MA): {ma60:.1f}</span>
+                    <span>乖離率: <strong style="color: {bias_color};">{bias_val:.1f}%</strong></span>
+                </div>
+                
+                <div style="margin-top: 8px; font-weight: bold; font-size: 1em;">
+                    {status_text}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
