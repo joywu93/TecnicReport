@@ -11,7 +11,8 @@ import requests
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 最終原生版", layout="wide")
+# 標題改了，方便您確認是否更新成功
+st.set_page_config(page_title="股市戰略 - 絕對原生版 (V3)", layout="wide")
 
 # 中文對照表
 STOCK_NAMES = {
@@ -55,17 +56,15 @@ def fetch_stock_data_batch(ticker_list):
     data_results = []
     
     for t in ticker_list:
-        max_retries = 3 # 增加重試次數到 3
+        max_retries = 3
         success = False
         
         for attempt in range(max_retries):
             try:
-                # 每次重試都換一個瀏覽器身分
+                time.sleep(random.uniform(1.0, 2.0))
+                
                 session = requests.Session()
                 session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
-                
-                # 稍微延遲，模擬真人
-                time.sleep(random.uniform(1.0, 2.0))
                 
                 # 嘗試 TW
                 stock_id = f"{t}.TW"
@@ -81,7 +80,6 @@ def fetch_stock_data_batch(ticker_list):
                 if df.empty or len(df) < 60:
                     raise ValueError("Data Empty")
 
-                # 計算數據
                 close = df['Close']
                 curr_price = close.iloc[-1]
                 ma60 = close.rolling(60).mean().iloc[-1]
@@ -97,21 +95,20 @@ def fetch_stock_data_batch(ticker_list):
                 break
                 
             except Exception:
-                time.sleep(1.5) # 失敗後多休息一下
+                time.sleep(1.5)
         
         if not success:
             data_results.append({
                 "code": t, "name": STOCK_NAMES.get(t, t),
-                "price": 0, "ma60": 0, "error": "連線逾時 (請稍後重試)"
+                "price": 0, "ma60": 0, "error": "連線逾時"
             })
             
     return data_results
 
 # ==========================================
-# 🖥️ UI 介面
+# 🖥️ UI 介面 (絕對原生版)
 # ==========================================
-st.title("📈 股市戰略 - 最終原生版") 
-# ^^^ 請確認網頁更新後，標題變成這個才算成功！
+st.title("📈 股市戰略 - 絕對原生版 (V3)")
 
 # 側邊欄
 with st.sidebar.form(key='stock_form'):
@@ -137,10 +134,9 @@ if submit_btn or refresh_btn:
     raw_tickers = re.findall(r'\d{4}', ticker_input)
     user_tickers = list(dict.fromkeys(raw_tickers))
     
-    progress_text = "正在分析中..."
-    my_bar = st.progress(0, text=progress_text)
+    my_bar = st.progress(0, text="正在分析中 (請稍候)...")
     
-    with st.spinner("正在連線 Yahoo Finance (速度較慢以防封鎖)..."):
+    with st.spinner("連線 Yahoo Finance 中..."):
         stock_data = fetch_stock_data_batch(user_tickers)
     
     my_bar.progress(100, text="分析完成！")
@@ -149,14 +145,13 @@ if submit_btn or refresh_btn:
     
     notify_list = []
     
-    # 顯示結果
     st.subheader(f"📊 分析結果 ({len(stock_data)} 檔)")
     
     for item in stock_data:
         # 1. 處理錯誤
         if item['error']:
             with st.container(border=True):
-                st.markdown(f"**{item['name']} ({item['code']})**")
+                st.markdown(f"#### {item['name']} `{item['code']}`")
                 st.error(f"❌ {item['error']}")
             continue
             
@@ -188,23 +183,21 @@ if submit_btn or refresh_btn:
             bias_msg = f"🔸 乖離偏高 (MA60: {ma60:.1f})"
             is_alert = True
             
-        # 4. 顯示卡片 (Native Container) - 這裡完全沒有 HTML 代碼
+        # 4. 顯示卡片 (這裡完全沒有 HTML 代碼，保證無亂碼)
         with st.container(border=True):
-            # 第一行：名稱與股價
-            c1, c2 = st.columns([3, 1])
-            c1.markdown(f"#### {item['name']} `{item['code']}`")
-            c2.markdown(f"#### ${price}")
+            col1, col2 = st.columns([2, 1])
+            col1.markdown(f"#### {item['name']} `{item['code']}`")
+            col2.markdown(f"#### ${price}")
             
-            # 第二行：乖離率數值 (用 Streamlit 顏色語法)
+            # 使用 Streamlit 顏色語法
             if bias_val >= 15:
-                st.markdown(f"乖離率：:red[**{bias_val:.1f}%**]")
+                st.markdown(f"**乖離率：:red[{bias_val:.1f}%]**")
             else:
-                st.markdown(f"乖離率：:green[**{bias_val:.1f}%**]")
+                st.markdown(f"**乖離率：:green[{bias_val:.1f}%]**")
             
-            # 第三行：訊號區
-            st.divider() # 分隔線
+            st.divider() 
             
-            # 趨勢
+            # 趨勢訊號
             if "多方" in trend_msg:
                 st.markdown(f":green[{trend_msg}]")
             else:
@@ -213,9 +206,9 @@ if submit_btn or refresh_btn:
             # 乖離警示
             if bias_msg:
                 if "過大" in bias_msg:
-                    st.error(bias_msg) # 紅色底框
+                    st.error(bias_msg) 
                 else:
-                    st.warning(bias_msg) # 黃色底框
+                    st.warning(bias_msg) 
                     
         # 收集 Email
         if is_alert:
