@@ -11,7 +11,7 @@ import requests
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 最終完結版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 原生穩定版", layout="wide")
 
 # 中文對照表
 STOCK_NAMES = {
@@ -28,14 +28,13 @@ STOCK_NAMES = {
 # 預設清單
 DEFAULT_LIST = "2330, 2317, 2323, 2451, 6229, 4763, 1522, 2404, 6788, 2344, 2368, 4979, 3163, 1326, 3491, 6143, 2383, 2454, 5225, 3526, 6197, 6203, 3570, 3231, 8299, 8069, 3037, 8046, 4977, 3455, 2408, 8271, 5439"
 
-# 偽裝標頭 (隨機切換，防擋專用)
+# 偽裝標頭
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 ]
 
-# --- Email 發送函數 (恢復功能) ---
+# --- Email 發送函數 ---
 def send_email_batch(sender, pwd, receivers, subject, body):
     if not sender or not pwd: return False
     try:
@@ -50,18 +49,20 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception:
         return False
 
-# --- 核心邏輯：快取抓取 (含自動重試) ---
+# --- 核心邏輯：快取抓取 ---
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_stock_data_batch(ticker_list):
     data_results = []
     
     for t in ticker_list:
-        max_retries = 3 # 每支股票最多重試 3 次
+        max_retries = 2
         success = False
         
         for attempt in range(max_retries):
             try:
-                # 每次連線換一個身分
+                # 隨機延遲，這是為了減少「系統錯誤」的關鍵
+                time.sleep(random.uniform(1.0, 2.5))
+                
                 session = requests.Session()
                 session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
                 
@@ -92,18 +93,15 @@ def fetch_stock_data_batch(ticker_list):
                     "error": None
                 })
                 success = True
-                time.sleep(random.uniform(0.1, 0.5)) # 成功後稍微休息
-                break # 成功就跳出重試迴圈
+                break
                 
             except Exception:
-                # 失敗了，休息久一點再試
-                time.sleep(random.uniform(1.0, 2.0))
+                time.sleep(1) # 失敗後休息
         
-        # 如果試了 3 次還是失敗
         if not success:
             data_results.append({
                 "code": t, "name": STOCK_NAMES.get(t, t),
-                "price": 0, "ma60": 0, "error": "連線失敗 (Yahoo阻擋)"
+                "price": 0, "ma60": 0, "error": "連線逾時 (請稍後重試)"
             })
             
     return data_results
@@ -111,14 +109,14 @@ def fetch_stock_data_batch(ticker_list):
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 最終完結版")
+st.title("📈 股市戰略 - 原生穩定版")
 
 # 側邊欄
 with st.sidebar.form(key='stock_form'):
     st.header("設定")
     
-    # 恢復 Email 輸入框
-    email_input = st.text_input("通知 Email (選填)", placeholder="輸入以接收通知")
+    # Email 輸入框回歸
+    email_input = st.text_input("通知 Email (選填)", placeholder="輸入 Email 以接收警示")
     
     ticker_input = st.text_area("股票清單", value=DEFAULT_LIST, height=300)
     
@@ -128,98 +126,112 @@ with st.sidebar.form(key='stock_form'):
     with col2:
         refresh_btn = st.form_submit_button(label='🔄 強制重抓')
 
-# 讀取 Secrets (如果有設定的話)
+# 讀取 Secrets
 MY_GMAIL = st.secrets.get("GMAIL_USER", "")
 MY_PWD = st.secrets.get("GMAIL_PASSWORD", "")
 
 if refresh_btn:
     st.cache_data.clear()
-    st.toast("🧹 快取已清除，正在重新連線並嘗試突破封鎖...", icon="🔄")
+    st.toast("快取已清除，正在重新連線...", icon="🔄")
 
 if submit_btn or refresh_btn:
     raw_tickers = re.findall(r'\d{4}', ticker_input)
     user_tickers = list(dict.fromkeys(raw_tickers))
     
-    with st.spinner(f"正在分析 {len(user_tickers)} 檔股票 (啟動自動重試機制)..."):
+    # 增加進度條
+    progress_text = "正在分析中，請稍候..."
+    my_bar = st.progress(0, text=progress_text)
+    
+    with st.spinner("正在連線 Yahoo Finance (速度較慢以防封鎖)..."):
         stock_data = fetch_stock_data_batch(user_tickers)
     
-    st.success(f"分析完成！共 {len(stock_data)} 檔。")
+    my_bar.progress(100, text="分析完成！")
+    time.sleep(0.5)
+    my_bar.empty()
     
     notify_list = []
     
-    # 顯示卡片
+    # === 使用 Streamlit 原生組件顯示 (保證無亂碼) ===
+    st.subheader(f"📊 分析結果 ({len(stock_data)} 檔)")
+    
     for item in stock_data:
+        # 1. 處理錯誤
         if item['error']:
-            st.warning(f"⚠️ {item['name']} ({item['code']}): {item['error']}")
+            with st.container(border=True):
+                st.markdown(f"**{item['name']} ({item['code']})**")
+                st.error(f"❌ {item['error']}")
             continue
             
         price = item['price']
         ma60 = item['ma60']
         
-        # 計算乖離
+        # 2. 計算乖離
         if ma60 > 0:
             bias_val = ((price - ma60) / ma60) * 100
         else:
             bias_val = 0
             
-        # === 訊號判斷 (疊加式邏輯) ===
-        msgs = []
-        border_style = "1px solid #ddd" 
-        bias_color = "black"
-        
-        # 1. 趨勢
-        if price > ma60:
-            msgs.append("🚀 多方行進(觀察)")
-            if bias_val < 15: 
-                 border_style = "2px solid #28a745" # 綠框
-        else:
-            msgs.append("📉 空方整理")
-        
-        # 2. 乖離 (疊加在後)
+        # 3. 判斷訊號 (您的指定邏輯)
+        trend_msg = ""
+        bias_msg = ""
         is_alert = False
+        
+        # A. 趨勢判斷
+        if price > ma60:
+            trend_msg = "🚀 多方行進(觀察)"
+        else:
+            trend_msg = "📉 空方整理"
+            
+        # B. 乖離判斷 (疊加)
         if bias_val >= 30:
-            msgs.append(f"🔥 乖離過大60sma({ma60:.1f})")
-            border_style = "2px solid #dc3545" # 紅框
-            bias_color = "#dc3545" # 紅字
+            bias_msg = f"🔥 乖離過大 (MA60: {ma60:.1f})"
             is_alert = True
         elif bias_val >= 15:
-            msgs.append(f"🔸 乖離偏高60sma({ma60:.1f})")
-            border_style = "2px solid #ffc107" # 黃框
-            bias_color = "#d39e00" # 黃字
+            bias_msg = f"🔸 乖離偏高 (MA60: {ma60:.1f})"
             is_alert = True
             
-        final_signal = " | ".join(msgs)
+        # 4. 顯示卡片 (Native Container)
+        # 根據狀態決定邊框顏色 (利用 Streamlit 的 error/warning/success 區塊特性)
         
-        # 收集要寄信的內容
+        with st.container(border=True):
+            # 第一行：名稱與股價
+            c1, c2 = st.columns([3, 1])
+            c1.markdown(f"### {item['name']} `{item['code']}`")
+            c2.markdown(f"### ${price}")
+            
+            # 第二行：乖離率數值
+            # 利用顏色標記
+            if bias_val >= 15:
+                st.markdown(f"乖離率：:red[**{bias_val:.1f}%**]")
+            else:
+                st.markdown(f"乖離率：:green[**{bias_val:.1f}%**]")
+            
+            # 第三行：訊號區
+            st.markdown("---") # 分隔線
+            
+            # 趨勢訊號
+            if "多方" in trend_msg:
+                st.markdown(f":green[{trend_msg}]")
+            else:
+                st.markdown(f":grey[{trend_msg}]")
+                
+            # 乖離訊號 (如果有才顯示)
+            if bias_msg:
+                if "過大" in bias_msg:
+                    st.error(bias_msg) # 紅色底框
+                else:
+                    st.warning(bias_msg) # 黃色底框
+                    
+        # 收集 Email 內容
         if is_alert:
-            notify_list.append(f"【{item['name']}】${price} | {final_signal}")
-        
-        # === 修正 HTML 顯示 (解決亂碼問題) ===
-        # 這裡改用單純的 string formatting，確保不會被誤判
-        card_html = f"""
-        <div style="border: {border_style}; padding: 12px; border-radius: 8px; margin-bottom: 12px; background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <span style="font-size: 1.2em; font-weight: bold;">{item['name']}</span>
-                    <span style="color: #666; font-size: 0.9em;"> ({item['code']})</span>
-                </div>
-                <div style="font-size: 1.3em; font-weight: bold;">${price}</div>
-            </div>
-            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 0.95em; color: #444; border-top: 1px solid #eee; padding-top: 8px;">
-                <span>乖離率: <strong style="color: {bias_color};">{bias_val:.1f}%</strong></span>
-            </div>
-            <div style="margin-top: 8px; font-weight: bold; font-size: 1em;">
-                {final_signal}
-            </div>
-        </div>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
+            full_msg = f"{trend_msg} | {bias_msg}"
+            notify_list.append(f"【{item['name']}】${price} | 乖離{bias_val:.1f}% | {full_msg}")
 
     # 發信邏輯
     if notify_list and email_input and MY_GMAIL:
-        st.info("📧 偵測到警示訊號，正在發送 Email...")
+        st.info(f"📧 偵測到 {len(notify_list)} 則警示，正在發送 Email...")
         body = "\n\n".join(notify_list)
         if send_email_batch(MY_GMAIL, MY_PWD, [email_input], "股市戰略警示", body):
             st.success("✅ Email 發送成功！")
         else:
-            st.error("❌ Email 發送失敗 (請檢查 Secrets 設定)")
+            st.error("❌ Email 發送失敗 (請檢查 Secrets)")
