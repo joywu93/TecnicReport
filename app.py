@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 # ==========================================
 # 🔧 系統設定
 # ==========================================
-st.set_page_config(page_title="股市戰略 - 專業術語版", layout="wide")
+st.set_page_config(page_title="股市戰略 - 最終執行版", layout="wide")
 
 # 中文對照表
 STOCK_NAMES = {
@@ -26,21 +26,7 @@ STOCK_NAMES = {
 # 預設清單
 DEFAULT_LIST = "2330, 2317, 2323, 2451, 6229, 4763, 1522, 2404, 6788, 2344, 2368, 4979, 3163, 1326, 3491, 6143, 2383, 2454, 5225, 3526, 6197, 6203, 3570, 3231, 8299, 8069, 3037, 8046, 4977, 3455, 2408, 8271, 5439"
 
-# --- Email 發送與診斷函數 ---
-def test_email_connection(sender, pwd, receiver):
-    try:
-        msg = MIMEText("這是一封測試信，代表您的 Streamlit 機器人發信功能正常！")
-        msg['Subject'] = "✅ 股市戰略 - 連線測試成功"
-        msg['From'] = f"股市小幫手 <{sender}>"
-        msg['To'] = receiver
-        
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(sender, pwd)
-            server.send_message(msg)
-        return True, "發送成功！"
-    except Exception as e:
-        return False, str(e)
-
+# --- Email 發送函數 ---
 def send_email_batch(sender, pwd, receivers, subject, body):
     if not sender or not pwd: return False
     try:
@@ -55,7 +41,7 @@ def send_email_batch(sender, pwd, receivers, subject, body):
     except Exception:
         return False
 
-# --- 核心邏輯：戰略分析 (SMA正名版) ---
+# --- 核心邏輯：戰略分析 ---
 def analyze_strategy(df):
     close = df['Close']
     volume = df['Volume']
@@ -96,18 +82,18 @@ def analyze_strategy(df):
     messages = []
     is_alert = False
 
-    # --- 1. 乖離率 (修正為 60SMA) ---
+    # --- 1. 乖離率 ---
     bias_val = ((curr_price - v60) / v60) * 100
     bias_msg = ""
     if bias_val >= 30:
         bias_msg = f"🔥 乖離過大 (60SMA: {v60:.1f})"
         is_alert = True 
     elif bias_val >= 15:
-        # A項：修正提示詞為 60SMA, 5SMA, 10SMA
+        # A項：修正提示詞，且不寄信
         bias_msg = f"🔸 乖離偏高 (60SMA: {v60:.1f}) | ✨ 短線提防跌破 5SMA({v5:.1f}) / 10SMA({v10:.1f})"
         # 不寄信
 
-    # ====== 客製化戰略邏輯 (SMA正名) ======
+    # ====== 客製化戰略邏輯 ======
 
     # C項：多方偏弱 / 年線保衛 (不寄信)
     is_weak_bull = False
@@ -126,21 +112,20 @@ def analyze_strategy(df):
         messages.append("🌊 多方行進(觀察) + ⚠️ 慎防跌破 60SMA")
 
     # D項：多方整理轉折-向上 (要寄信)
-    # 修正提示詞：5MA -> 5SMA, 10MA -> 10SMA
     elif curr_price > v60 and v5 > p5 and v5 > v10:
         messages.append(f"✨ 多方整理轉折 (5SMA({v5:.1f})向上 > 10SMA({v10:.1f}))")
         is_alert = True
 
     # E項：多方整理轉折-向下 (要寄信)
-    # 修正提示詞：5MA -> 5SMA, 10MA -> 10SMA
     elif curr_price > v60 and v5 < p5 and curr_price < v5 and v5 < v10:
         messages.append(f"✨ 多方整理轉折 (5SMA({v5:.1f})向下 < 10SMA({v10:.1f}))")
         is_alert = True
 
-    # 4. 其他強勢防守 (SMA正名)
+    # 4. 其他強勢防守
     elif curr_price > v60 and curr_price > v5 and curr_price > v10 and curr_price > v20 and v5 > p5 and v10 > p10 and v20 > p20:
         messages.append(f"🌊 多方行進 + ✨ 短線提防跌破 5SMA({v5:.1f}) / 10SMA({v10:.1f})")
-        is_alert = True
+        # 這裡根據之前的邏輯是強勢防守，若您希望它也不寄信，可把下一行註解掉
+        is_alert = True 
 
     # ====== 通用邏輯 ======
     if not messages:
@@ -195,18 +180,14 @@ def fetch_all_data(user_tickers):
 # ==========================================
 # 🖥️ UI 介面
 # ==========================================
-st.title("📈 股市戰略 - 專業術語版")
+st.title("📈 股市戰略 - 最終執行版")
 
 with st.sidebar.form(key='stock_form'):
     st.header("設定")
     email_input = st.text_input("通知 Email (必填)", placeholder="輸入 Email 以接收警示")
     ticker_input = st.text_area("股票清單", value=DEFAULT_LIST, height=300)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        submit_btn = st.form_submit_button(label='🚀 智能分析')
-    with col2:
-        test_email_btn = st.form_submit_button(label='📧 寄送測試信')
+    submit_btn = st.form_submit_button(label='🚀 智能分析')
 
 # 讀取 Secrets
 MY_GMAIL = st.secrets.get("GMAIL_USER", "")
@@ -214,16 +195,6 @@ MY_PWD = st.secrets.get("GMAIL_PASSWORD", "")
 
 if not MY_GMAIL or not MY_PWD:
     st.sidebar.error("⚠️ 未設定 Secrets，無法寄信！")
-
-# 測試信按鈕
-if test_email_btn:
-    if not email_input: st.toast("❌ 請填寫 Email", icon="⚠️")
-    elif not MY_GMAIL or not MY_PWD: st.toast("❌ Secrets 未設定", icon="🚫")
-    else:
-        with st.spinner("連線中..."):
-            success, msg = test_email_connection(MY_GMAIL, MY_PWD, email_input)
-            if success: st.success("✅ 測試成功，信件已發送！")
-            else: st.error(f"❌ 發送失敗：{msg}")
 
 # 主程式
 if submit_btn:
