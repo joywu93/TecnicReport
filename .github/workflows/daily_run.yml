@@ -1,37 +1,7 @@
-name: Daily Stock Report
-
 on:
   schedule:
-    # GitHub 使用 UTC 時間
-    # 台灣 10:00 = UTC 02:00
-    # 台灣 13:00 = UTC 05:00
-    # 設定週一到週五執行
-    - cron: '0 2 * * 1-5'
+    # 台灣時間 09:30, 13:00, 15:30 (週一至週五)
+    - cron: '30 1 * * 1-5'
     - cron: '0 5 * * 1-5'
-  
-  # 允許手動按鈕執行 (方便測試)
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
-
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run Report Script
-      env:
-        GMAIL_USER: ${{ secrets.GMAIL_USER }}
-        GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
-      run: python daily_report.py
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch: # 保留手動執行按鈕
