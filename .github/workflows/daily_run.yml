@@ -5,3 +5,4 @@ on:
     - cron: '0 5 * * 1-5'
     - cron: '30 7 * * 1-5'
   workflow_dispatch: # 保留手動執行按鈕
+
