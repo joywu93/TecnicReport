@@ -9,85 +9,56 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# 1. 完整公司名稱對照表 (確保截圖中的 6285、1522、8358 等都有名稱)
-STOCK_NAMES = {
-    "2330": "台積電", "2317": "鴻海", "6285": "啟碁", "6290": "良維", 
-    "1522": "堤維西", "8358": "金居", "3406": "玉晶光", "2603": "長榮",
-    "6996": "力領科技", "5225": "東科-KY"
-}
-
-def analyze_strategy(df):
-    try:
-        close = df['Close']
-        if len(close) < 60: return None
-        curr_price = float(close.iloc[-1])
-        sma60 = close.rolling(60).mean().iloc[-1]
-        bias_val = ((curr_price - sma60) / sma60) * 100
-        
-        # 標記訊號
-        msg = "🚀 轉多訊號" if curr_price > sma60 else "📉 走勢觀望"
-        return f"{msg} (乖離 {bias_val:.1f}%)", curr_price
-    except:
-        return None
+# 112 檔個股名稱對照 [cite: 16-38]
+STOCK_NAMES = {"2330": "台積電", "2404": "漢唐", "6996": "力領科技", "5225": "東科-KY"}
 
 def run_batch():
-    print(f"⏰ 啟動定時任務：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # 讀取環境變數
-    creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    sender = os.environ.get("GMAIL_USER")
-    pwd = os.environ.get("GMAIL_PASSWORD")
-    
-    if not all([creds_json, sender, pwd]):
-        print("❌ 錯誤：GitHub Secrets 設定不完整！請檢查 GMAIL_USER 與 GMAIL_PASSWORD")
-        return
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+    print(f"⏰ 指揮中心啟動：{now_str}")
 
-    # 連線 Google Sheets
-    creds_dict = json.loads(creds_json)
-    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    client = gspread.authorize(creds)
+    creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    sender, pwd = os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_PASSWORD")
+    if not all([creds_json, sender, pwd]): return
+
+    client = gspread.authorize(Credentials.from_service_account_info(json.loads(creds_json), 
+             scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']))
     sheet = client.open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     
-    all_data = sheet.get_all_records()
-    print(f"📊 偵測到雲端帳號：{len(all_data)} 個") # 預期為 3
-
-    for row in all_data:
+    for row in sheet.get_all_records():
         email = row.get('Email')
         tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
         if not email or not tickers: continue
         
-        print(f"🔎 正在為 {email} 分析 {len(tickers)} 檔個股...")
-        
-        # 批次下載
+        # 💡 批次下載最後兩天的資料 (涵蓋休市期間的最後交易日)
         dl_list = [f"{t}.TW" for t in tickers] + [f"{t}.TWO" for t in tickers]
-        data = yf.download(dl_list, period="1y", group_by='ticker', progress=False)
+        data = yf.download(dl_list, period="5d", group_by='ticker', progress=False)
         
-        report_content = []
+        report_lines = []
         for t in tickers:
             df = data[f"{t}.TW"] if f"{t}.TW" in data.columns.levels[0] else data.get(f"{t}.TWO", pd.DataFrame())
             if not df.empty and not df['Close'].dropna().empty:
-                res = analyze_strategy(df)
-                if res:
-                    status, price = res
-                    name = STOCK_NAMES.get(t, f"個股 {t}")
-                    report_content.append(f"【{name} {t}】${price:.2f} | {status}")
-        
-        # 💡 強制發信：確保連線正常
-        if report_content:
-            subject = f"📈 股市戰略日報 ({datetime.now().strftime('%m/%d %H:%M')})"
-            body = f"前輩您好，這是您的戰略分析報告：\n\n" + "\n".join(report_content)
+                last_price = float(df['Close'].dropna().iloc[-1])
+                sma60 = df['Close'].rolling(60).mean().iloc[-1]
+                # 乖離率計算
+                bias = ((last_price - sma60) / sma60) * 100 if sma60 else 0
+                name = STOCK_NAMES.get(t, f"個股 {t}")
+                report_lines.append(f"【{name} {t}】${last_price:.2f} | 乖離 {bias:.1f}%")
+
+        # 💡 強制發信：即便休市也會回報「最後收盤狀態」
+        if report_lines:
+            body = f"前輩好，這是您的戰略日報 (目前市場休市中)：\n\n"
+            body += f"更新時間：{now_str}\n"
+            body += "--- 最後交易日狀態 ---\n" + "\n".join(report_lines)
             
             msg = MIMEText(body)
-            msg['Subject'], msg['From'], msg['To'] = subject, sender, email
-            
+            msg['Subject'] = f"📈 股市戰略日報 - {now_str} (休市監測)"
+            msg['From'], msg['To'] = f"指揮中心 <{sender}>", email
             try:
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                     server.login(sender, pwd)
                     server.send_message(msg)
-                print(f"✅ 信件已發送至：{email}")
-            except Exception as e:
-                print(f"❌ 寄信失敗：{e}")
+                print(f"✅ 已發送至 {email}")
+            except: pass
 
 if __name__ == "__main__":
     run_batch()
