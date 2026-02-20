@@ -9,10 +9,11 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# 1. 名稱對照表 (確保截圖中的 6285、1522、8358 等都有名稱)
+# 1. 完整公司名稱對照表 (確保截圖中的 6285、1522、8358 等都有名稱)
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "6285": "啟碁", "6290": "良維", 
-    "1522": "堤維西", "8358": "金居", "3406": "玉晶光", "2603": "長榮"
+    "1522": "堤維西", "8358": "金居", "3406": "玉晶光", "2603": "長榮",
+    "6996": "力領科技", "5225": "東科-KY"
 }
 
 def analyze_strategy(df):
@@ -23,8 +24,8 @@ def analyze_strategy(df):
         sma60 = close.rolling(60).mean().iloc[-1]
         bias_val = ((curr_price - sma60) / sma60) * 100
         
-        # 💡 戰略標記
-        msg = "🚀 轉多訊號" if curr_price > sma60 else "📉 觀望"
+        # 標記訊號
+        msg = "🚀 轉多訊號" if curr_price > sma60 else "📉 走勢觀望"
         return f"{msg} (乖離 {bias_val:.1f}%)", curr_price
     except:
         return None
@@ -38,7 +39,7 @@ def run_batch():
     pwd = os.environ.get("GMAIL_PASSWORD")
     
     if not all([creds_json, sender, pwd]):
-        print("❌ 錯誤：GitHub Secrets 設定不完整！")
+        print("❌ 錯誤：GitHub Secrets 設定不完整！請檢查 GMAIL_USER 與 GMAIL_PASSWORD")
         return
 
     # 連線 Google Sheets
@@ -49,18 +50,14 @@ def run_batch():
     sheet = client.open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     
     all_data = sheet.get_all_records()
-    print(f"📊 偵測到雲端帳號數量：{len(all_data)}") # 預期為 3 個
+    print(f"📊 偵測到雲端帳號：{len(all_data)} 個") # 預期為 3
 
     for row in all_data:
         email = row.get('Email')
-        stock_list_raw = str(row.get('Stock_List', ''))
-        tickers = re.findall(r'\d{4}', stock_list_raw)
+        tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
+        if not email or not tickers: continue
         
-        if not email or not tickers:
-            print(f"⏭️ 跳過無效行：{email}")
-            continue
-        
-        print(f"🔎 正在處理帳號：{email} (共 {len(tickers)} 檔個股)")
+        print(f"🔎 正在為 {email} 分析 {len(tickers)} 檔個股...")
         
         # 批次下載
         dl_list = [f"{t}.TW" for t in tickers] + [f"{t}.TWO" for t in tickers]
@@ -76,10 +73,10 @@ def run_batch():
                     name = STOCK_NAMES.get(t, f"個股 {t}")
                     report_content.append(f"【{name} {t}】${price:.2f} | {status}")
         
-        # 💡 無論如何都發信，確保連線正常
+        # 💡 強制發信：確保連線正常
         if report_content:
-            subject = f"📈 股市戰略日報 - {datetime.now().strftime('%m/%d %H:%M')}"
-            body = f"前輩您好，這是您的定時戰略分析報告：\n\n" + "\n".join(report_content)
+            subject = f"📈 股市戰略日報 ({datetime.now().strftime('%m/%d %H:%M')})"
+            body = f"前輩您好，這是您的戰略分析報告：\n\n" + "\n".join(report_content)
             
             msg = MIMEText(body)
             msg['Subject'], msg['From'], msg['To'] = subject, sender, email
@@ -90,7 +87,7 @@ def run_batch():
                     server.send_message(msg)
                 print(f"✅ 信件已發送至：{email}")
             except Exception as e:
-                print(f"❌ 寄信給 {email} 失敗：{e}")
+                print(f"❌ 寄信失敗：{e}")
 
 if __name__ == "__main__":
     run_batch()
