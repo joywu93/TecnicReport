@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# 此處 analyze_strategy 函數請貼入與上方 app.py 相同的內容
+# 此處 analyze_strategy 函數請與上方 app.py 內容保持一致
 
 def run_batch():
     creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -26,15 +26,14 @@ def run_batch():
         
         for t in tickers:
             df = data[f"{t}.TW"] if f"{t}.TW" in data.columns.levels[0] else data.get(f"{t}.TWO", pd.DataFrame())
-            if not df.empty and not df['Close'].dropna().empty:
-                res = analyze_strategy(df)
-                # 💡 修正關鍵：只有價格不是空值才發信
-                if res[3] and res[1] is not None:
-                    notify_list.append(f"【{t}】${res[1]:.2f} | {res[0]}")
+            res_msg, price, bias, urg = analyze_strategy(df)
+            # 關鍵修正：確保價格不是 None 才進行文字格式化
+            if urg and price is not None:
+                notify_list.append(f"【{t}】${price:.2f} | {res_msg}")
         
         if notify_list:
             msg = MIMEText("\n".join(notify_list))
-            msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
+            msg['Subject'] = f"📈 股市戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
             msg['From'], msg['To'] = sender, email
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(sender, pwd)
