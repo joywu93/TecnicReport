@@ -1,3 +1,5 @@
 streamlit
-yfinance
+gspread
+google-auth
 pandas
+yfinance
