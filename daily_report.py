@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# (此處 analyze_strategy 函數請與上方 app.py 內容保持完全一致)
+# 此處 analyze_strategy 函數內容請貼入與上方 App.py 相同的內容
 
 def run_batch():
     creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -27,13 +27,14 @@ def run_batch():
             if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
             
             if not df.empty:
-                res = analyze_strategy(df)
-                if res[3] and res[1] is not None:
-                    notify_list.append(f"【{t}】${res[1]:.2f} | {res[0]}")
+                sig, p, b, urg = analyze_strategy(df)
+                # 💡 加入防空檢查：只有 p 有值才格式化金額
+                if urg and p is not None and p > 0:
+                    notify_list.append(f"【{t}】${p:.2f} | {sig}")
         
         if notify_list:
             msg = MIMEText("\n".join(notify_list))
-            msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
+            msg['Subject'] = f"📈 定時戰略通知 - {datetime.now().strftime('%m/%d %H:%M')}"
             msg['From'], msg['To'] = sender, email
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(sender, pwd)
