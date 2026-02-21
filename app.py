@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 # ==========================================
-# 🔧 1. 系統設定與 112 檔名單 (已包含力領科技 6996)
+# 🔧 1. 系統設定與 112 檔名單 [cite: 63-88]
 # ==========================================
 st.set_page_config(page_title="股市戰略指揮中心", layout="wide")
 
@@ -28,68 +28,76 @@ def init_sheet():
     return client.open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
 
 # ==========================================
-# 🧠 2. 核心戰略判讀大腦 (精準對位 條件判讀.docx)
+# 🧠 2. 核心戰略判讀大腦 (2026 最新修正版) [cite: 108-206, 370-385]
 # ==========================================
 def analyze_strategy(df):
     try:
-        if df.empty or len(df) < 240: return "資料不足", 0, 0, False
+        if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
         
-        # 💡 關鍵修正：確保提取的是數值 (.item() 或 float)，避免 Series 報錯
+        # 💡 關鍵修正：確保提取純數值，避免 Series 報錯
         close = df['Close'].dropna()
         volume = df['Volume'].dropna()
         curr_p = float(close.iloc[-1])
         prev_p = float(close.iloc[-2])
+        p3_close = float(close.iloc[-4]) # 前3日收盤價 [cite: 31, 375]
+        
         curr_v = float(volume.iloc[-1])
         prev_v = float(volume.iloc[-2])
-        pct_chg = (curr_p - prev_p) / prev_p
         
-        # 計算均線今日值
-        v5 = float(close.rolling(5).mean().iloc[-1])
-        v10 = float(close.rolling(10).mean().iloc[-1])
-        v20 = float(close.rolling(20).mean().iloc[-1])
-        v60 = float(close.rolling(60).mean().iloc[-1])
-        v240 = float(close.rolling(240).mean().iloc[-1])
+        # 均線計算
+        ma5_s = close.rolling(5).mean()
+        ma10_s = close.rolling(10).mean()
+        ma20_s = close.rolling(20).mean()
+        ma60_s = close.rolling(60).mean()
+        ma240_s = close.rolling(240).mean()
         
-        # 計算均線昨日值 (判斷趨勢用)
-        p5 = float(close.rolling(5).mean().iloc[-2])
-        p10 = float(close.rolling(10).mean().iloc[-2])
-        p20 = float(close.rolling(20).mean().iloc[-2])
-        p60 = float(close.rolling(60).mean().iloc[-2])
+        v5, v10, v20, v60, v240 = float(ma5_s.iloc[-1]), float(ma10_s.iloc[-1]), float(ma20_s.iloc[-1]), float(ma60_s.iloc[-1]), float(ma240.iloc[-1])
+        p5, p10, p20, p60 = float(ma5_s.iloc[-2]), float(ma10_s.iloc[-2]), float(ma20_s.iloc[-2]), float(ma60_s.iloc[-2])
 
         up_cnt = sum([v5 > p5, v10 > p10, v20 > p20])
         dn_cnt = sum([v5 < p5, v10 < p10, v20 < p20])
-        msg, alert = [], False
-
-        # 1. 季線轉折
-        if prev_p < p60 and curr_p > v60: msg.append("🚀 轉多訊號：站上季線(60SMA)"); alert = True
-        elif prev_p > p60 and curr_p < v60: msg.append("📉 轉空警示：跌破季線(60SMA)"); alert = True
-
-        # 2. 強勢反彈 (漲>=5%且爆量1.5倍)
-        if pct_chg >= 0.05 and curr_v > prev_v * 1.5:
-            msg.append(f"🔥 強勢反彈 (爆量) 慎防跌破 {close.iloc[-4]:.2f}"); alert = True
-
-        # 3. 形態轉折
-        if up_cnt >= 2 and curr_p < v60 and curr_p < v240: msg.append("✨ 底部轉折：均線翻揚"); alert = True
-        elif dn_cnt >= 2 and curr_p > v60 and curr_p > v240 and curr_p < v5: msg.append("✨ 高檔轉整理：均線翻下"); alert = True
-
-        # 4. 量價背離
-        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p: msg.append("⚠️ 量價背離：量增價跌"); alert = True
-
-        # 6. 均線糾結 (差距 < 2%)
-        ma_diff = (max(v5, v10, v20) - min(v5, v10, v20)) / min(v5, v10, v20)
-        if ma_diff < 0.02: msg.append("🌀 均線糾結：變盤在即"); alert = True
-
+        
+        msg, is_alert, is_mail = [], False, False
         bias = ((curr_p - v60) / v60) * 100
-        # 7. 乖離附加
-        if curr_p > v60 * 1.3: msg.append(f"🚨 乖離過高 60SMA({v60:.2f})"); alert = True
 
-        if not msg: msg.append("🌊 多方行進" if curr_p > v60 else "☁️ 空方盤整")
-        return " | ".join(msg), curr_p, bias, alert
+        # 1. 季線轉折 [cite: 4-11]
+        if prev_p < p60 and curr_p > v60:
+            msg.append(f"🚀 轉多訊號：站上季線(60SMA)"); is_alert = is_mail = True
+        elif prev_p > p60 and curr_p < v60:
+            msg.append(f"📉 轉空警示：跌破季線(60SMA)"); is_alert = is_mail = True
+
+        # 2. 強勢反彈 [cite: 14-16]
+        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5:
+            msg.append(f"🔥 強勢反彈 (爆量) 慎防跌破 {p3_close:.2f}"); is_alert = is_mail = True
+
+        # 3. 形態轉折 (修正訊息格式) [cite: 376-381]
+        if up_cnt >= 2 and curr_p < v60 and curr_p < v240:
+            msg.append(f"✨ 底部轉折：均線翻揚 5SMA({v5:.2f}) 10SMA({v10:.2f})"); is_alert = is_mail = True
+        elif dn_cnt >= 2 and curr_p > v60 and curr_p > v240 and curr_p < v5:
+            msg.append(f"✨ 高檔轉整理：均線翻下 5SMA({v5:.2f}) 10SMA({v10:.2f})"); is_alert = is_mail = True
+
+        # 4. 量價背離 (修正訊息格式) [cite: 29-31, 374-375]
+        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p:
+            msg.append(f"⚠️ 量價背離：未來3日的收盤價 > 前3日的收盤價({p3_close:.2f})"); is_alert = is_mail = True
+
+        # 6. 均線糾結 (標註不寄信) [cite: 41-43, 372-373]
+        ma_diff = (max(v5, v10, v20) - min(v5, v10, v20)) / min(v5, v10, v20)
+        if ma_diff < 0.02:
+            msg.append("🌀 均線糾結：變盤在即"); is_alert = True # 僅網頁顯示警示顏色，不設 mail 觸發
+
+        # 7. 乖離附加 [cite: 45-47]
+        if curr_p > v60 * 1.3:
+            msg.append(f"🚨 乖離率過高 60SMA({v60:.2f})"); is_alert = is_mail = True
+
+        if not msg:
+            msg.append("🌊 多方行進" if curr_p > v60 else "☁️ 空方盤整")
+
+        return " | ".join(msg), curr_p, v60, bias, is_mail
     except Exception as e:
-        return f"分析錯誤: {str(e)}", 0, 0, False
+        return f"分析錯誤: {str(e)}", 0, 0, 0, False
 
 # ==========================================
-# 🖥️ 3. UI 介面與同步
+# 🖥️ 3. UI 介面與顯示優化 [cite: 382-385]
 # ==========================================
 st.title("📈 股市戰略指揮中心")
 if "stocks" not in st.session_state: st.session_state["stocks"] = ""
@@ -109,49 +117,44 @@ with st.sidebar:
     ticker_input = st.text_area("自選股清單", value=st.session_state["stocks"], height=300)
     submit_btn = st.button("🚀 執行智能分析並同步")
 
-# 顯示載入數量
-if st.session_state["stocks"]:
-    cnt = len(re.findall(r'\d{4}', st.session_state["stocks"]))
-    st.info(f"📋 聯合合作戰清單：已載入 {cnt} 檔個股")
-
 if submit_btn:
     try:
         sheet = init_sheet()
         raw_tk = re.findall(r'\d{4}', ticker_input)
         user_tk = list(dict.fromkeys(raw_tk))
+        
         if user_tk:
             st.session_state["stocks"] = ", ".join(user_tk)
             st.info(f"正在分析 {len(user_tk)} 檔戰略標的...")
             notify_list = []
             
-            # 單檔下載，確保 .TWO 不漏股
             for t in user_tk:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
                 
-                if not df.empty and not df['Close'].dropna().empty:
-                    sig, p, b, urg = analyze_strategy(df)
+                if not df.empty:
+                    sig, p, s60, b, mail_trigger = analyze_strategy(df)
                     name = STOCK_NAMES.get(t, f"個股 {t}")
                     with st.container(border=True):
-                        st.markdown(f"#### {name} `{t}` - ${p:.2f}")
+                        # 💡 修正顯示格式 
+                        st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 60SMA({s60:.2f}) {b:.1f}%")
                         st.write(f"📊 戰略判讀：{sig}")
-                        if urg: notify_list.append(f"【{name} {t}】${p:.2f} | {sig}")
-                else:
-                    st.warning(f"⚠️ {t} 無法抓取資料 (請確認代號或連線)")
+                        if mail_trigger:
+                            notify_list.append(f"【{name} {t}】${p:.2f} | 60SMA({s60:.2f}) 乖離{b:.1f}% | {sig}")
 
-            # 同步更新雲端
+            # 雲端存檔更新
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             data = sheet.get_all_records()
             u_idx = next((i for i, r in enumerate(data) if r['Email'] == email_in), -1)
             if u_idx != -1:
                 sheet.update_cell(u_idx + 2, 2, st.session_state["stocks"])
                 sheet.update_cell(u_idx + 2, 3, now_str)
-                st.success("✅ 雲端存檔同步成功！")
+                st.success("✅ 雲端存檔同步完成！")
             
-            # 寄信
+            # 寄信 (已過濾均線糾結) 
             if notify_list:
                 s_u, s_p = st.secrets["GMAIL_USER"], st.secrets["GMAIL_PASSWORD"]
-                msg = MIMEText("\n".join(notify_list))
+                msg = MIMEText("\n\n".join(notify_list))
                 msg['Subject'] = f"📈 戰略警訊 - {datetime.now().strftime('%m/%d %H:%M')}"
                 msg['From'], msg['To'] = s_u, email_in
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
