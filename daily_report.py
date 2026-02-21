@@ -27,13 +27,14 @@ def run_batch():
             if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
             
             if not df.empty:
-                res = analyze_strategy(df)
-                if res[3] and res[1] is not None and res[1] > 0:
-                    notify_list.append(f"【{t}】${res[1]:.2f} | {res[0]}")
+                sig, p, s60, b, mail_trigger = analyze_strategy(df)
+                # 💡 只有符合警示且非「單純糾結」時才發信 
+                if mail_trigger and p is not None:
+                    notify_list.append(f"【{t}】${p:.2f} | 60SMA({s60:.2f}) 乖離{b:.1f}% | {sig}")
         
         if notify_list:
-            msg = MIMEText("\n".join(notify_list))
-            msg['Subject'] = f"📈 戰略定時通知 - {datetime.now().strftime('%m/%d %H:%M')}"
+            msg = MIMEText("\n\n".join(notify_list))
+            msg['Subject'] = f"📈 定時戰略通知 - {datetime.now().strftime('%m/%d %H:%M')}"
             msg['From'], msg['To'] = sender, email
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(sender, pwd)
