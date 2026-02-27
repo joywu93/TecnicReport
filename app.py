@@ -1,5 +1,5 @@
 # ==========================================
-# 📂 程式抬頭：App.py (網頁指揮中心 - 領口實戰版)
+# 📂 程式抬頭：App.py (網頁指揮中心 - 全功能整合版)
 # ==========================================
 import streamlit as st
 import yfinance as yf
@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. 系統設定與 112 檔完整名單 (含 6996 力領科技) ---
+# --- 1. 系統設定與 112 檔完整名單 ---
 st.set_page_config(page_title="股市戰略指揮中心", layout="wide")
 
 STOCK_NAMES = {
@@ -30,8 +30,8 @@ STOCK_NAMES = {
     "3548": "兆利", "3570": "大塚", "3596": "智易", "3679": "新至陞", "3711": "日月光投控",
     "3712": "永崴投控", "4554": "橙的", "4760": "勤凱", "4763": "材料*-KY", "4766": "南寶",
     "4915": "致伸", "4953": "緯軟", "4961": "天鈺", "4979": "華星光", "5225": "東科-KY",
-    "5236": "凌陽創新", "5284": "jpp-KY", "5388": "中磊", "5439": "高技", "5871": "中租-KY",
-    "6104": "創維", "6121": "新普", "6139": "亞翔", "6143": "振曜", "6158": "禾昌",
+    "5236": "聯陽創新", "5284": "jpp-KY", "5388": "中磊", "5439": "高技", "5871": "中租-KY",
+    "6104": "創惟", "6121": "新普", "6139": "亞翔", "6143": "振曜", "6158": "禾昌",
     "6176": "瑞儀", "6187": "萬潤", "6197": "佳必琪", "6203": "海韻電", "6221": "晉泰",
     "6227": "茂崙", "6257": "矽格", "6261": "久元", "6274": "台燿", "6278": "台表科",
     "6285": "啟碁", "6290": "良維", "6538": "倉和", "6579": "研揚", "6605": "帝寶",
@@ -49,60 +49,74 @@ def init_sheet():
         return gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     except: return None
 
-# --- 2. 核心大腦 (更新領口落差算法) ---
+# --- 2. 核心大腦 (補回強勢反彈與量價背離) ---
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
         df.columns = df.columns.get_level_values(0)
-        close, highs, lows = df['Close'].astype(float), df['High'].astype(float), df['Low'].astype(float)
+        close, highs, lows, volume = df['Close'].astype(float), df['High'].astype(float), df['Low'].astype(float), df['Volume'].astype(float)
         
-        curr_p = float(close.iloc[-1])
+        curr_p, prev_p = float(close.iloc[-1]), float(close.iloc[-2])
+        curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
+        p3_close = float(close.iloc[-4])
+        
         ma60 = float(close.rolling(60).mean().iloc[-1])
         ma240 = float(close.rolling(240).mean().iloc[-1])
+        v5 = float(close.rolling(5).mean().iloc[-1])
+        v10 = float(close.rolling(10).mean().iloc[-1])
+        v20 = float(close.rolling(20).mean().iloc[-1])
         
         msg, is_mail = [], False
         bias = ((curr_p - ma60) / ma60) * 100
 
+        # A. 形態偵測 (M頭/W底)
         recent_h, recent_l = highs.tail(30), lows.tail(30)
-
-        # 1. M頭偵測 (基準 12%) [修正：以今日價計算領口落差]
-        if curr_p > ma240:
+        
+        if curr_p > ma240: # M頭偵測
             peak_a_val = float(recent_h.max())
             peak_a_idx = recent_h.idxmax()
             post_peak = recent_l.loc[peak_a_idx:]
             if len(post_peak) > 3:
                 m_trough_val = float(post_peak.min())
                 m_trough_idx = post_peak.idxmin()
-                internal_drop = (peak_a_val - m_trough_val) / peak_a_val
-                if internal_drop >= 0.12:
+                if (peak_a_val - m_trough_val) / peak_a_val >= 0.12:
                     a_days = len(df) - 1 - df.index.get_loc(peak_a_idx)
                     b_days = len(df) - 1 - df.index.get_loc(m_trough_idx)
-                    # 💡 實戰落差：今日價與中間底的差距
                     real_gap = ((curr_p - m_trough_val) / m_trough_val) * 100
                     msg.append(f"⚠ M頭警戒: 左頭 {peak_a_val:.2f} ({a_days}日前), 中間底 {m_trough_val:.2f} ({b_days}日前), 實戰領口距 {real_gap:.1f}%")
                     is_mail = True
-
-        # 2. W底偵測 (基準 10%) [修正：以今日價計算領口落差]
-        elif curr_p < ma240:
+        elif curr_p < ma240: # W底偵測
             trough_a_val = float(recent_l.min())
             trough_a_idx = recent_l.idxmin()
             post_trough = recent_h.loc[trough_a_idx:]
             if len(post_trough) > 3:
                 w_peak_val = float(post_trough.max())
                 w_peak_idx = post_trough.idxmax()
-                internal_rise = (w_peak_val - trough_a_val) / trough_a_val
-                if internal_rise >= 0.10:
+                if (w_peak_val - trough_a_val) / trough_a_val >= 0.10:
                     a_days = len(df) - 1 - df.index.get_loc(trough_a_idx)
                     b_days = len(df) - 1 - df.index.get_loc(w_peak_idx)
-                    # 💡 實戰落差：頸線高與今日價的差距
                     real_gap = ((w_peak_val - curr_p) / w_peak_val) * 100
                     msg.append(f"✨ W底機會: 左底 {trough_a_val:.2f} ({a_days}日前), 頸線高 {w_peak_val:.2f} ({b_days}日前), 實戰領口距 {real_gap:.1f}%")
                     is_mail = True
 
+        # B. 既有戰略 (補回遺漏項)
+        # 1. 強勢反彈 (漲>=5% 且 爆量1.5x)
+        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: 
+            msg.append("🔥 強勢反彈"); is_mail = True
+            
+        # 2. 量價背離 / 暴跌預警 (價跌 且 量增1.2x)
+        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p:
+            msg.append(f"⚠️ 量價背離：未來3日的收盤價 > 前3日的收盤價({p3_close:.2f})")
+            is_mail = True
+
+        # 3. 均線糾結 (不發信)
+        ma_diff = (max(v5, v10, v20) - min(v5, v10, v20)) / min(v5, v10, v20)
+        if ma_diff < 0.02: msg.append("🌀 均線糾結：變盤在即")
+
         if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
         return " | ".join(msg), curr_p, ma60, bias, is_mail
     except Exception as e:
-        return f"分析錯誤: {str(e)}", 0, 0, 0, False
+        return f"分析失敗: {str(e)}", 0, 0, 0, False
 
 # --- 3. UI 介面 ---
 st.title("📈 股市戰略指揮中心")
@@ -136,4 +150,4 @@ if submit_btn:
                 with st.container(border=True):
                     st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 60SMA({s60:.2f}) {b:.1f}%")
                     st.write(f"📊 戰略判讀：{sig}")
-        st.success("✅ 分析完成")
+        st.success("✅ 全戰略分析完成")
