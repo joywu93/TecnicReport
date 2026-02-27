@@ -36,7 +36,7 @@ STOCK_NAMES = {
     "6227": "茂崙", "6257": "矽格", "6261": "久元", "6274": "台燿", "6278": "台表科",
     "6285": "啟碁", "6290": "良維", "6538": "倉和", "6579": "研揚", "6605": "帝寶",
     "6613": "朋億*", "6629": "泰金-KY", "6651": "全宇昕", "6667": "信紘科", "6768": "志強-KY",
-    "6788": "華景電", "6894": "衛司特", "6951": "青新-創", "6967": "汎瑋材料", "6996": "力領科技",
+    "6788": "華景電", "6894": "衛司特", "6951": "靑新-創", "6967": "汎瑋材料", "6996": "力領科技",
     "8081": "致新", "8358": "金居", "8432": "東生華", "8473": "山林水", "8938": "明安",
     "9914": "美利達", "9939": "宏全"
 }
@@ -49,27 +49,30 @@ def init_sheet():
         return gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     except: return None
 
-# --- 2. 核心大腦 (解決 Ambiguous Series 與 ma240 未定義問題) ---
+# --- 2. 核心大腦 (解決 Ambiguous Series 與 ma240 未定義) ---
 def analyze_strategy(df):
     try:
-        # 💡 強制數據清洗與對位
-        df = df.copy()
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
         
-        # 提取單一價格數值 (Scalar)
+        # 💡 強制拍扁雙層標籤，確保讀取的是 Series
+        df.columns = df.columns.get_level_values(0)
         close = df['Close'].astype(float).dropna()
         highs = df['High'].astype(float).dropna()
         lows = df['Low'].astype(float).dropna()
+        volume = df['Volume'].astype(float).dropna()
         
+        # 提取單一價格數值 (Scalar)
         curr_p = float(close.iloc[-1])
         prev_p = float(close.iloc[-2])
-        p3_close = float(close.iloc[-4])
+        curr_v = float(volume.iloc[-1])
+        prev_v = float(volume.iloc[-2])
         
-        # 均線計算 (定義 ma240 與 ma60)
+        # 均線計算 (明確定義，解決 image_4f5193 錯誤)
         ma60 = float(close.rolling(60).mean().iloc[-1])
         ma240 = float(close.rolling(240).mean().iloc[-1])
         v5 = float(close.rolling(5).mean().iloc[-1])
         v10 = float(close.rolling(10).mean().iloc[-1])
+        v20 = float(close.rolling(20).mean().iloc[-1])
         
         msg, is_mail = [], False
         bias = ((curr_p - ma60) / ma60) * 100
@@ -78,11 +81,10 @@ def analyze_strategy(df):
         recent_h = highs.tail(30)
         recent_l = lows.tail(30)
         
-        # 1. M頭偵測 (股價 > 年線)
+        # 1. M頭偵測
         if curr_p > ma240:
             peak_a_val = float(recent_h.max())
             peak_a_idx = recent_h.idxmax()
-            # 💡 確保索引切片正確
             post_peak_data = recent_l.loc[peak_a_idx:]
             if len(post_peak_data) > 3:
                 m_trough = float(post_peak_data.min())
@@ -92,8 +94,8 @@ def analyze_strategy(df):
                     msg.append(f"⚠ M頭警戒: 左頭 {peak_a_val:.2f} ({days}天前)，落差 {m_drop*100:.1f}%")
                     is_mail = True
 
-        # 2. W底偵測 (股價 < 年線)
-        if curr_p < ma240:
+        # 2. W底偵測
+        elif curr_p < ma240:
             trough_a_val = float(recent_l.min())
             trough_a_idx = recent_l.idxmin()
             post_trough_data = recent_h.loc[trough_a_idx:]
@@ -105,9 +107,12 @@ def analyze_strategy(df):
                     msg.append(f"✨ W底機會: 左底 {trough_a_val:.2f} ({days}天前)，落差 {w_rise*100:.1f}%")
                     is_mail = True
 
-        # B. 戰略判讀 (量價、轉折)
-        if (curr_p - prev_p)/prev_p >= 0.05: msg.append("🔥 強勢反彈"); is_mail = True
-        if curr_p > v5 and prev_p < v5: msg.append(f"🌀 5SMA突破({v5:.2f})")
+        # B. 既有戰略判讀
+        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: 
+            msg.append("🔥 強勢反彈"); is_mail = True
+        
+        ma_diff = (max(v5, v10, v20) - min(v5, v10, v20)) / min(v5, v10, v20)
+        if ma_diff < 0.02: msg.append("🌀 均線糾結：變盤在即")
 
         if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
         return " | ".join(msg), curr_p, ma60, bias, is_mail
@@ -139,7 +144,7 @@ if submit_btn:
     if sheet:
         notify_list = []
         for t in user_tk:
-            # 💡 一次下載一檔，徹底避開 MultiIndex 索引報錯
+            # 💡 一次下載一檔，徹底避開 MultiIndex 報錯
             df = yf.download(f"{t}.TW", period="2y", progress=False)
             if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
             
@@ -147,19 +152,19 @@ if submit_btn:
                 sig, p, s60, b, m_trig = analyze_strategy(df)
                 name = STOCK_NAMES.get(t, f"個股 {t}")
                 with st.container(border=True):
-                    # 💡 顯示格式完全對位 image_4fdbdf.png
+                    # 💡 格式對位
                     st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 60SMA({s60:.2f}) {b:.1f}%")
                     st.write(f"📊 戰略判讀：{sig}")
                     if m_trig: notify_list.append(f"【{name} {t}】${p:.2f} | {sig}")
 
-        # 雲端同步
+        # 雲端同步更新
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = sheet.get_all_records()
         u_idx = next((i for i, r in enumerate(data) if r['Email'] == email_in), -1)
         if u_idx != -1:
             sheet.update_cell(u_idx + 2, 2, st.session_state["stocks"])
             sheet.update_cell(u_idx + 2, 3, now_str)
-            st.success("✅ 雲端同步與排序完成")
+            st.success("✅ 雲端同步與代號遞增排序完成")
 
         if notify_list:
             try:
@@ -170,4 +175,4 @@ if submit_btn:
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                     server.login(s_u, s_p); server.send_message(msg)
                 st.toast("📧 警報已發信")
-            except: pass
+            except: st.error("郵件發送失敗")
