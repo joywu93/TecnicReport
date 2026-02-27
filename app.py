@@ -1,5 +1,5 @@
 # ==========================================
-# 📂 程式抬頭：App.py (網頁指揮中心 - 座標全解析)
+# 📂 程式抬頭：App.py (網頁指揮中心 - 領口實戰版)
 # ==========================================
 import streamlit as st
 import yfinance as yf
@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. 系統設定與 112 檔完整名單 [來自 image_505042.png] ---
+# --- 1. 系統設定與 112 檔完整名單 (含 6996 力領科技) ---
 st.set_page_config(page_title="股市戰略指揮中心", layout="wide")
 
 STOCK_NAMES = {
@@ -49,7 +49,7 @@ def init_sheet():
         return gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     except: return None
 
-# --- 2. 核心大腦 (修正 M頭/W底 天數標註格式) ---
+# --- 2. 核心大腦 (更新領口落差算法) ---
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
@@ -63,11 +63,9 @@ def analyze_strategy(df):
         msg, is_mail = [], False
         bias = ((curr_p - ma60) / ma60) * 100
 
-        # A. 形態偵測 (Window=30 交易日)
-        recent_h = highs.tail(30)
-        recent_l = lows.tail(30)
+        recent_h, recent_l = highs.tail(30), lows.tail(30)
 
-        # 1. M頭偵測 (基準 12%) [依照前輩要求標註中間底天數]
+        # 1. M頭偵測 (基準 12%) [修正：以今日價計算領口落差]
         if curr_p > ma240:
             peak_a_val = float(recent_h.max())
             peak_a_idx = recent_h.idxmax()
@@ -75,15 +73,16 @@ def analyze_strategy(df):
             if len(post_peak) > 3:
                 m_trough_val = float(post_peak.min())
                 m_trough_idx = post_peak.idxmin()
-                m_drop = (peak_a_val - m_trough_val) / peak_a_val
-                if m_drop >= 0.12:
-                    # 💡 計算天數距離
+                internal_drop = (peak_a_val - m_trough_val) / peak_a_val
+                if internal_drop >= 0.12:
                     a_days = len(df) - 1 - df.index.get_loc(peak_a_idx)
                     b_days = len(df) - 1 - df.index.get_loc(m_trough_idx)
-                    msg.append(f"⚠ M頭警戒: 左頭 {peak_a_val:.2f} ({a_days}日前), 中間底 {m_trough_val:.2f} ({b_days}日前), 落差 {m_drop*100:.1f}%")
+                    # 💡 實戰落差：今日價與中間底的差距
+                    real_gap = ((curr_p - m_trough_val) / m_trough_val) * 100
+                    msg.append(f"⚠ M頭警戒: 左頭 {peak_a_val:.2f} ({a_days}日前), 中間底 {m_trough_val:.2f} ({b_days}日前), 實戰領口距 {real_gap:.1f}%")
                     is_mail = True
 
-        # 2. W底偵測 (基準 10%) [依照前輩要求標註頸線高天數]
+        # 2. W底偵測 (基準 10%) [修正：以今日價計算領口落差]
         elif curr_p < ma240:
             trough_a_val = float(recent_l.min())
             trough_a_idx = recent_l.idxmin()
@@ -91,12 +90,13 @@ def analyze_strategy(df):
             if len(post_trough) > 3:
                 w_peak_val = float(post_trough.max())
                 w_peak_idx = post_trough.idxmax()
-                w_rise = (w_peak_val - trough_a_val) / trough_a_val
-                if w_rise >= 0.10:
-                    # 💡 計算天數距離
+                internal_rise = (w_peak_val - trough_a_val) / trough_a_val
+                if internal_rise >= 0.10:
                     a_days = len(df) - 1 - df.index.get_loc(trough_a_idx)
                     b_days = len(df) - 1 - df.index.get_loc(w_peak_idx)
-                    msg.append(f"✨ W底機會: 左底 {trough_a_val:.2f} ({a_days}日前), 頸線高 {w_peak_val:.2f} ({b_days}日前), 落差 {w_rise*100:.1f}%")
+                    # 💡 實戰落差：頸線高與今日價的差距
+                    real_gap = ((w_peak_val - curr_p) / w_peak_val) * 100
+                    msg.append(f"✨ W底機會: 左底 {trough_a_val:.2f} ({a_days}日前), 頸線高 {w_peak_val:.2f} ({b_days}日前), 實戰領口距 {real_gap:.1f}%")
                     is_mail = True
 
         if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
@@ -136,4 +136,4 @@ if submit_btn:
                 with st.container(border=True):
                     st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 60SMA({s60:.2f}) {b:.1f}%")
                     st.write(f"📊 戰略判讀：{sig}")
-        st.success("✅ 分析與同步完成")
+        st.success("✅ 分析完成")
