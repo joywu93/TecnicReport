@@ -49,81 +49,83 @@ def init_sheet():
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
-        
-        # 💡 拍平 yfinance 雙層標籤
         df.columns = df.columns.get_level_values(0)
-        close = df['Close'].astype(float).dropna()
-        highs = df['High'].astype(float).dropna()
-        lows = df['Low'].astype(float).dropna()
-        volume = df['Volume'].astype(float).dropna()
+        close, highs, lows, volume = df['Close'].astype(float), df['High'].astype(float), df['Low'].astype(float), df['Volume'].astype(float)
         
         curr_p, prev_p = float(close.iloc[-1]), float(close.iloc[-2])
         curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
-        p3_close = float(close.iloc[-4])
         
         ma60 = float(close.rolling(60).mean().iloc[-1])
         ma240 = float(close.rolling(240).mean().iloc[-1])
-        v5 = float(close.rolling(5).mean().iloc[-1])
-        v10 = float(close.rolling(10).mean().iloc[-1])
-        v20 = float(close.rolling(20).mean().iloc[-1])
         
         msg, is_mail = [], False
         bias = ((curr_p - ma60) / ma60) * 100
 
-        # A. 趨勢線偵測 (Lows 60日)
-        recent_l_60 = lows.tail(60)
-        l1_val = float(recent_l_60.min())
-        l1_idx = recent_l_60.idxmin()
-        post_l1 = recent_l_60.loc[l1_idx:]
-        if len(post_l1) > 5:
-            l2_val = float(post_l1.iloc[1:].min())
-            l2_idx = post_l1.iloc[1:].idxmin()
-            dist = len(df) - 1 - df.index.get_loc(l1_idx)
-            l2_dist = len(df) - 1 - df.index.get_loc(l2_idx)
-            if dist != l2_dist:
-                slope = (l2_val - l1_val) / (dist - l2_dist)
-                support = l2_val + (slope * l2_dist)
+        # A. 💡 長線趨勢線偵測 (修正為 120 日)
+        recent_l_120 = lows.tail(120)
+        l1_val = float(recent_l_120.min())
+        l1_idx = recent_l_120.idxmin()
+        # 尋找 L1 之後的局部低點
+        post_l1 = recent_l_120.loc[l1_idx:].iloc[1:]
+        if len(post_l1) > 10:
+            l2_val = float(post_l1.min())
+            l2_idx = post_l1.idxmin()
+            
+            # 兩點定一線
+            dist = df.index.get_loc(l2_idx) - df.index.get_loc(l1_idx)
+            if dist > 0 and l2_val > l1_val:
+                slope = (l2_val - l1_val) / dist
+                today_dist = len(df) - 1 - df.index.get_loc(l2_idx)
+                support = l2_val + (slope * today_dist)
                 gap = ((curr_p - support) / support) * 100
                 if abs(gap) <= 2.5: 
-                    msg.append(f"🛡️ 趨勢線支撐: {support:.2f} (距 {gap:.1f}%)")
+                    msg.append(f"🛡️ 120日趨勢支撐: {support:.2f} (距 {gap:.1f}%)")
                     is_mail = True
 
-        # B. 形態偵測 (M頭 12% / W底 10%)
-        recent_h, recent_l = highs.tail(30), lows.tail(30)
+        # B. 💡 中長線型態偵測 (修正為 60 日)
+        recent_h, recent_l = highs.tail(60), lows.tail(60)
+        
+        # 1. M頭 (落差 12%)
         if curr_p > ma240:
             p_a_v = float(recent_h.max()); p_a_i = recent_h.idxmax()
-            post_p = recent_l.loc[p_a_i:]
-            if len(post_p) > 3:
-                m_t_v = float(post_p.min()); m_t_i = post_p.idxmin()
+            post_p_idx = df.index.get_loc(p_a_i)
+            post_p_data = lows.iloc[post_p_idx:]
+            if len(post_p_data) > 5:
+                m_t_v = float(post_p_data.min())
+                m_t_i = post_p_data.idxmin()
                 if (p_a_v - m_t_v) / p_a_v >= 0.12:
-                    a_d = len(df) - 1 - df.index.get_loc(p_a_i)
+                    a_d = len(df) - 1 - post_p_idx
                     b_d = len(df) - 1 - df.index.get_loc(m_t_i)
                     gap = ((curr_p - m_t_v) / m_t_v) * 100
-                    msg.append(f"⚠ M頭警戒: 左頭 {p_a_v:.2f} ({a_d}日前), 中間底 {m_t_v:.2f} ({b_d}日前), 領口距 {gap:.1f}%")
-                    is_mail = True
-        elif curr_p < ma240:
-            t_a_v = float(recent_l.min()); t_a_i = recent_l.idxmin()
-            post_t = recent_h.loc[t_a_i:]
-            if len(post_t) > 3:
-                w_p_v = float(post_t.max()); w_p_i = post_t.idxmax()
-                if (w_p_v - t_a_v) / t_a_v >= 0.10:
-                    a_d = len(df) - 1 - df.index.get_loc(t_a_i)
-                    b_d = len(df) - 1 - df.index.get_loc(w_p_i)
-                    gap = ((w_p_v - curr_p) / w_p_v) * 100
-                    msg.append(f"✨ W底機會: 左底 {t_a_v:.2f} ({a_d}日前), 頸線高 {w_p_v:.2f} ({b_d}日前), 領口距 {gap:.1f}%")
+                    status = "🚨 M頭跌破成立" if curr_p < m_t_v else "⚠ M頭警戒"
+                    msg.append(f"{status}: 左頭 {p_a_v:.2f} ({a_d}日前), 中間底 {m_t_v:.2f} ({b_d}日前), 領口距 {gap:.1f}%")
                     is_mail = True
 
-        # C. 戰略判讀 (補回反彈與背離)
+        # 2. W底 (落差 10%) [對位 image_63a264.png]
+        elif curr_p < ma240:
+            t_a_v = float(recent_l.min()); t_a_i = recent_l.idxmin()
+            post_t_idx = df.index.get_loc(t_a_i)
+            post_t_data = highs.iloc[post_t_idx:]
+            if len(post_t_data) > 5:
+                w_p_v = float(post_t_data.max())
+                w_p_i = post_t_data.idxmax()
+                if (w_p_v - t_a_v) / t_a_v >= 0.10:
+                    a_d = len(df) - 1 - post_t_idx
+                    b_d = len(df) - 1 - df.index.get_loc(w_p_i)
+                    gap = ((w_p_v - curr_p) / w_p_v) * 100
+                    # 💡 判斷突破成立
+                    status = "✨ W底突破成立" if curr_p > w_p_v else "✨ W底機會"
+                    msg.append(f"{status}: 左底 {t_a_v:.2f} ({a_d}日前), 頸線高 {w_p_v:.2f} ({b_d}日前), 領口距 {gap:.1f}%")
+                    is_mail = True
+
         if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: 
             msg.append("🔥 強勢反彈"); is_mail = True
-        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p:
-            msg.append(f"⚠️ 量價背離: 基準 {p3_close:.2f}"); is_mail = True
             
         if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
         return " | ".join(msg), curr_p, ma60, bias, is_mail
     except Exception as e: return f"分析失敗: {str(e)}", 0, 0, 0, False
 
-# --- 3. UI 介面 ---
+# --- UI 介面 ---
 st.title("📈 股市戰略指揮中心")
 if "stocks" not in st.session_state: st.session_state["stocks"] = ""
 
@@ -137,7 +139,7 @@ with st.sidebar:
             user = next((r for r in data if r['Email'] == email_in), None)
             if user: st.session_state["stocks"] = str(user['Stock_List'])
     ticker_input = st.text_area("自選股清單", value=st.session_state["stocks"], height=300)
-    submit_btn = st.button("🚀 執行分析並同步")
+    submit_btn = st.button("🚀 執行長線型態分析")
 
 if submit_btn:
     raw_tk = re.findall(r'\d{4}', ticker_input)
@@ -145,7 +147,6 @@ if submit_btn:
     st.session_state["stocks"] = ", ".join(user_tk)
     sheet = init_sheet()
     if sheet:
-        notify_list = []
         for t in user_tk:
             df = yf.download(f"{t}.TW", period="2y", progress=False)
             if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
@@ -155,15 +156,4 @@ if submit_btn:
                 with st.container(border=True):
                     st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 60SMA({s60:.2f}) {b:.1f}%")
                     st.write(f"📊 戰略判讀：{sig}")
-                    if m_trig: notify_list.append(f"【{name} {t}】${p:.2f} | {sig}")
-
-        if notify_list:
-            try:
-                s_u, s_p = st.secrets["GMAIL_USER"], st.secrets["GMAIL_PASSWORD"]
-                msg = MIMEText("\n\n".join(notify_list))
-                msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
-                msg['From'], msg['To'] = s_u, email_in
-                with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                    server.login(s_u, s_p); server.send_message(msg)
-                st.toast("📧 警報已發信")
-            except: pass
+        st.success("✅ 120日趨勢與型態突破分析完成")
