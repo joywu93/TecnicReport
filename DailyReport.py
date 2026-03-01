@@ -5,31 +5,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# 💡 補回發報機的大腦
-def analyze_strategy(df):
-    try:
-        if df.empty or len(df) < 240: return "不足", 0, 0, 0, False
-        df.columns = df.columns.get_level_values(0)
-        close, lows, highs = df['Close'].astype(float).dropna(), df['Low'].astype(float).dropna(), df['High'].astype(float).dropna()
-        curr_p = float(close.iloc[-1])
-        ma60 = float(close.rolling(60).mean().iloc[-1])
-        # W底偵測
-        r_l, r_h = lows.tail(60), highs.tail(60)
-        t_a_v = float(r_l.min()); t_a_i = r_l.idxmin()
-        post_a = r_h.loc[t_a_i:]
-        if len(post_a) > 5:
-            w_p_v = float(post_a.max()); w_p_i = post_a.idxmax()
-            post_b = lows.loc[w_p_i:]
-            if len(post_b) > 3:
-                t_c_v = float(post_b.min())
-                if t_c_v >= (t_a_v * 0.97) and (w_p_v - t_a_v)/t_a_v >= 0.10:
-                    gap = ((w_p_v - curr_p) / w_p_v) * 100
-                    status = "✨ W底突破" if curr_p > w_p_v else "✨ W底機會"
-                    return f"{status}(距{gap:.1f}%)", curr_p, ma60, 0, True
-        # 強制測試：只要站上季線就發信
-        if curr_p > ma60: return "🌊 多方行進", curr_p, ma60, 0, True
-        return "", curr_p, ma60, 0, False
-    except: return "錯誤", 0, 0, 0, False
+# (💡 此處請貼入與 app.py 相同的 STOCK_NAMES 與 analyze_strategy 函式內容)
 
 def run_batch():
     try:
@@ -44,7 +20,7 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 強迫測試行，保證信件內容不為空
+            # 💡 通訊測試行，確保信件不為空
             notify_list = [f"✅ 通訊測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
