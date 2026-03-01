@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. 112 檔完整名單 (修正名稱缺失問題) ---
+# --- 1. 112 檔完整名單 (修正 image_589f70.png 個股名稱問題) ---
 STOCK_NAMES = {
     "1464": "得力", "1517": "利奇", "1522": "堤維西", "1597": "直得", "1616": "億泰",
     "2228": "劍麟", "2313": "華通", "2317": "鴻海", "2327": "國巨", "2330": "台積電",
@@ -36,25 +36,30 @@ STOCK_NAMES = {
     "9914": "美利達", "9939": "宏全"
 }
 
+def init_sheet():
+    try:
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        return gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
+    except: return None
+
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
+        
+        # 💡 解決 image_194cfa.png 的關鍵：拍平 yfinance 標籤
         df.columns = df.columns.get_level_values(0)
         close = df['Close'].astype(float).dropna()
         highs = df['High'].astype(float).dropna()
         lows = df['Low'].astype(float).dropna()
         volume = df['Volume'].astype(float).dropna()
         
-        curr_p, prev_p = float(close.iloc[-1]), float(close.iloc[-2])
-        curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
-        p3_close = float(close.iloc[-4])
-        
-        ma5 = close.rolling(5).mean(); v5 = float(ma5.iloc[-1])
-        ma60 = close.rolling(60).mean(); v60 = float(ma60.iloc[-1])
-        ma240 = close.rolling(240).mean(); v240 = float(ma240.iloc[-1])
+        curr_p = float(close.iloc[-1])
+        ma60 = float(close.rolling(60).mean().iloc[-1])
+        bias = ((curr_p - ma60) / ma60) * 100
         
         msg, is_mail = [], False
-        bias = ((curr_p - v60) / v60) * 100
 
         # W底偵測 (60日)
         r_l, r_h = lows.tail(60), highs.tail(60)
@@ -65,6 +70,7 @@ def analyze_strategy(df):
             post_b = lows.loc[w_p_i:]
             if len(post_b) > 3:
                 t_c_v = float(post_b.min())
+                # 右底不低於左底 3%
                 if t_c_v >= (t_a_v * 0.97) and (w_p_v - t_a_v)/t_a_v >= 0.10:
                     a_d, b_d = len(df)-1-df.index.get_loc(t_a_i), len(df)-1-df.index.get_loc(w_p_i)
                     gap = ((w_p_v - curr_p) / w_p_v) * 100
@@ -72,15 +78,38 @@ def analyze_strategy(df):
                     msg.append(f"{status}: 左底{t_a_v:.1f}({a_d}日前), 頸高{w_p_v:.1f}({b_d}日前), 領口距{gap:.1f}%")
                     is_mail = True
 
-        # 7 大戰略核心項
-        if prev_p < v60 and curr_p > v60: msg.append(f"🚀 轉多：站上季線({v60:.1f})"); is_mail = True
-        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: 
-            msg.append(f"🔥 強勢反彈：基準({p3_close:.2f})"); is_mail = True
-        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p:
-            msg.append(f"⚠️ 量價背離：基準({p3_close:.2f})"); is_mail = True
-
-        if not msg: msg.append("🌊 多方行進" if curr_p > v60 else "☁ 空方盤整")
-        return " | ".join(msg), curr_p, v60, bias, is_mail
+        if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
+        return " | ".join(msg), curr_p, ma60, bias, is_mail
     except: return "分析錯誤", 0, 0, 0, False
 
-# (UI 介面省略，保持與之前一致，請確保 st.title 正常執行)
+# --- UI 介面 ---
+st.title("📈 股市戰略指揮中心")
+if "stocks" not in st.session_state: st.session_state["stocks"] = ""
+
+with st.sidebar:
+    st.header("權限驗證")
+    email_in = st.text_input("通知 Email", value="joywu4093@gmail.com").strip()
+    if st.button("🔄 讀取雲端清單"):
+        sheet = init_sheet()
+        if sheet:
+            data = sheet.get_all_records()
+            user = next((r for r in data if r['Email'] == email_in), None)
+            if user: st.session_state["stocks"] = str(user['Stock_List'])
+    ticker_input = st.text_area("自選股清單", value=st.session_state["stocks"], height=300)
+    submit_btn = st.button("🚀 執行全戰略分析")
+
+if submit_btn:
+    raw_tk = re.findall(r'\d{4}', ticker_input)
+    user_tk = sorted(list(dict.fromkeys(raw_tk)))
+    st.session_state["stocks"] = ", ".join(user_tk)
+    sheet = init_sheet()
+    if sheet:
+        for t in user_tk:
+            df = yf.download(f"{t}.TW", period="2y", progress=False)
+            if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
+            if not df.empty:
+                sig, p, s60, b, m_trig = analyze_strategy(df)
+                name = STOCK_NAMES.get(t, f"個股 {t}")
+                with st.container(border=True):
+                    st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 {b:.1f}%")
+                    st.write(f"📊 戰略判讀：{sig}")
