@@ -1,11 +1,4 @@
-import os, gspread, json, re, smtplib
-import pandas as pd
-import yfinance as yf
-from email.mime.text import MIMEText
-from google.oauth2.service_account import Credentials
-from datetime import datetime
-
-# (STOCK_NAMES 字典請複製與上方 app.py 相同內容)
+# (前略：STOCK_NAMES 字典與 analyze_strategy 請複製 app.py 相同內容)
 
 def run_batch():
     try:
@@ -21,28 +14,23 @@ def run_batch():
         for row in sheet.get_all_records():
             email, stocks = row.get('Email'), str(row.get('Stock_List', ''))
             tickers = re.findall(r'\d{4}', stocks)
-            if not email or not tickers: continue
+            if not email: continue
             
-            notify_list = []
-            # 💡 測試模式：強迫加入一條成功訊息，用來測試通訊
-            notify_list.append(f"✅ 通訊測試：自動發報機已於 {datetime.now().strftime('%H:%M')} 啟動成功")
+            # 💡 測試模式：即使沒訊號也強迫發出一封信確認通訊
+            notify_list = [f"✅ 系統自動化通訊測試：OK ({datetime.now().strftime('%H:%M')})"]
             
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
                 if not df.empty:
-                    # 💡 呼叫與網頁版相同的 analyze_strategy
-                    sig, p, v60, b, is_mail = analyze_strategy(df)
-                    if is_mail:
-                        notify_list.append(f"【{t}】${p:.2f} | {sig}")
+                    sig, p, s60, b, im = analyze_strategy(df)
+                    if im: notify_list.append(f"【{t}】${p:.2f} | {sig}")
             
-            if len(notify_list) > 1: # 除了測試訊息外還有警報才寄出
-                msg = MIMEText("\n\n".join(notify_list))
-                msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
-                msg['From'], msg['To'] = sender, email
-                with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                    server.login(sender, pwd); server.send_message(msg)
+            # 發送郵件
+            msg = MIMEText("\n\n".join(notify_list))
+            msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
+            msg['From'], msg['To'] = sender, email
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(sender, pwd); server.send_message(msg)
+                print(f"Mail sent to {email}")
     except Exception as e: print(f"Error: {e}")
-
-if __name__ == "__main__":
-    run_batch()
