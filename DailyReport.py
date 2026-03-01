@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# (💡 此處請貼入與 app.py 相同的 STOCK_NAMES 與 analyze_strategy 函式內容)
+# (💡 此處請貼入與上方 app.py 相同的 STOCK_NAMES 與 analyze_strategy 函式)
 
 def run_batch():
     try:
@@ -20,8 +20,8 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 通訊測試行，確保信件不為空
-            notify_list = [f"✅ 通訊測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
+            # 💡 通訊測試：保證內容不為空
+            notify_list = [f"✅ 戰略機連線測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
@@ -34,7 +34,6 @@ def run_batch():
             msg['From'], msg['To'] = sender, email
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(sender, pwd); server.send_message(msg)
-                print(f"Mail sent to {email}")
     except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
