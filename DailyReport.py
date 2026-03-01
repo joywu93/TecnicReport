@@ -1,4 +1,11 @@
-# (前略：analyze_strategy 保持不變)
+import os, gspread, json, re, smtplib
+import pandas as pd
+import yfinance as yf
+from email.mime.text import MIMEText
+from google.oauth2.service_account import Credentials
+from datetime import datetime
+
+# (核心邏輯 analyze_strategy 同上，此處略過以節省空間)
 
 def run_batch():
     try:
@@ -15,24 +22,21 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 強制測試模式：這行訊息保證信件內容不為空
-            notify_list = [f"📢 自動化連線測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
+            # 💡 測試模式：強迫內容不為空，保證發信測試
+            notify_list = [f"✅ 通訊測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
             
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
                 if not df.empty:
-                    sig, p, v60, b, is_mail = analyze_strategy(df)
-                    if is_mail: # 只有符合戰略條件才加入
-                        notify_list.append(f"【{t}】${p:.2f} | {sig}")
+                    sig, p, s60, b, im = analyze_strategy(df)
+                    if im: notify_list.append(f"【{t}】${p:.2f} | {sig}")
             
-            # 💡 只要 notify_list 有內容 (含測試文字) 就發信
-            if notify_list:
-                msg = MIMEText("\n\n".join(notify_list))
-                msg['Subject'] = f"📈 戰略巡航回報 - {datetime.now().strftime('%m/%d')}"
-                msg['From'], msg['To'] = sender, email
-                with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                    server.login(sender, pwd); server.send_message(msg)
+            msg = MIMEText("\n\n".join(notify_list))
+            msg['Subject'] = f"📈 戰略巡航回報 - {datetime.now().strftime('%m/%d')}"
+            msg['From'], msg['To'] = sender, email
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(sender, pwd); server.send_message(msg)
     except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
