@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. 112 檔完整名單 (修正 image_589f70.png 個股名稱問題) ---
+# --- 1. 112 檔完整名單 (修正 image_589f70.png 名稱缺失) ---
 STOCK_NAMES = {
     "1464": "得力", "1517": "利奇", "1522": "堤維西", "1597": "直得", "1616": "億泰",
     "2228": "劍麟", "2313": "華通", "2317": "鴻海", "2327": "國巨", "2330": "台積電",
@@ -44,22 +44,24 @@ def init_sheet():
         return gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
     except: return None
 
+# --- 2. 核心分析邏輯 (同步 7 大戰略與 W 底) ---
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
-        
-        # 💡 解決 image_194cfa.png 的關鍵：拍平 yfinance 標籤
         df.columns = df.columns.get_level_values(0)
         close = df['Close'].astype(float).dropna()
-        highs = df['High'].astype(float).dropna()
-        lows = df['Low'].astype(float).dropna()
+        highs, lows = df['High'].astype(float).dropna(), df['Low'].astype(float).dropna()
         volume = df['Volume'].astype(float).dropna()
         
-        curr_p = float(close.iloc[-1])
-        ma60 = float(close.rolling(60).mean().iloc[-1])
-        bias = ((curr_p - ma60) / ma60) * 100
+        curr_p, prev_p = float(close.iloc[-1]), float(close.iloc[-2])
+        curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
+        p3_close = float(close.iloc[-4])
+        
+        ma5, ma60 = close.rolling(5).mean(), close.rolling(60).mean()
+        v5, v60 = float(ma5.iloc[-1]), float(ma60.iloc[-1])
         
         msg, is_mail = [], False
+        bias = ((curr_p - v60) / v60) * 100
 
         # W底偵測 (60日)
         r_l, r_h = lows.tail(60), highs.tail(60)
@@ -70,7 +72,6 @@ def analyze_strategy(df):
             post_b = lows.loc[w_p_i:]
             if len(post_b) > 3:
                 t_c_v = float(post_b.min())
-                # 右底不低於左底 3%
                 if t_c_v >= (t_a_v * 0.97) and (w_p_v - t_a_v)/t_a_v >= 0.10:
                     a_d, b_d = len(df)-1-df.index.get_loc(t_a_i), len(df)-1-df.index.get_loc(w_p_i)
                     gap = ((w_p_v - curr_p) / w_p_v) * 100
@@ -78,14 +79,18 @@ def analyze_strategy(df):
                     msg.append(f"{status}: 左底{t_a_v:.1f}({a_d}日前), 頸高{w_p_v:.1f}({b_d}日前), 領口距{gap:.1f}%")
                     is_mail = True
 
-        if not msg: msg.append("🌊 多方行進" if curr_p > ma60 else "☁ 空方盤整")
-        return " | ".join(msg), curr_p, ma60, bias, is_mail
+        # [cite_start]7 大核心戰略 [cite: 2-31]
+        if prev_p < v60 and curr_p > v60: msg.append(f"🚀 轉多：站上季線({v60:.1f})"); is_mail = True
+        elif prev_p > v60 and curr_p < v60: msg.append(f"📉 轉空：跌破季線({v60:.1f})"); is_mail = True
+        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: msg.append("🔥 強勢反彈"); is_mail = True
+        if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p: msg.append("⚠️ 量價背離"); is_mail = True
+
+        if not msg: msg.append("🌊 多方行進" if curr_p > v60 else "☁ 空方盤整")
+        return " | ".join(msg), curr_p, v60, bias, is_mail
     except: return "分析錯誤", 0, 0, 0, False
 
-# --- UI 介面 ---
+# --- 3. UI 介面與雲端同步修正 ---
 st.title("📈 股市戰略指揮中心")
-if "stocks" not in st.session_state: st.session_state["stocks"] = ""
-
 with st.sidebar:
     st.header("權限驗證")
     email_in = st.text_input("通知 Email", value="joywu4093@gmail.com").strip()
@@ -95,8 +100,8 @@ with st.sidebar:
             data = sheet.get_all_records()
             user = next((r for r in data if r['Email'] == email_in), None)
             if user: st.session_state["stocks"] = str(user['Stock_List'])
-    ticker_input = st.text_area("自選股清單", value=st.session_state["stocks"], height=300)
-    submit_btn = st.button("🚀 執行全戰略分析")
+    ticker_input = st.text_area("自選股清單", value=st.session_state.get("stocks", ""), height=300)
+    submit_btn = st.button("🚀 執行分析並同步雲端")
 
 if submit_btn:
     raw_tk = re.findall(r'\d{4}', ticker_input)
@@ -104,6 +109,13 @@ if submit_btn:
     st.session_state["stocks"] = ", ".join(user_tk)
     sheet = init_sheet()
     if sheet:
+        # 💡 修正：將新清單同步寫回 Google Sheet
+        try:
+            cell = sheet.find(email_in)
+            sheet.update_cell(cell.row, cell.col + 1, ", ".join(user_tk))
+            st.success("✅ 雲端清單同步成功")
+        except: st.warning("⚠️ 找不到 Email，無法同步雲端")
+
         for t in user_tk:
             df = yf.download(f"{t}.TW", period="2y", progress=False)
             if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
@@ -112,4 +124,4 @@ if submit_btn:
                 name = STOCK_NAMES.get(t, f"個股 {t}")
                 with st.container(border=True):
                     st.markdown(f"#### {name} {t} - ${p:.2f} 乖離率 {b:.1f}%")
-                    st.write(f"📊 戰略判讀：{sig}")
+                    st.write(f"📊 判讀：{sig}")
