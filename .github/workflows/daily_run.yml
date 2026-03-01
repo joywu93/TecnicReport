@@ -2,26 +2,26 @@ name: 股市戰略自動發報
 
 on:
   schedule:
-    # 💡 台灣 09:30 = UTC 01:30 (早盤偵測)
+    # 💡 台灣 09:30 = UTC 01:30
     - cron: '30 1 * * 1-5' 
-    # 💡 台灣 13:00 = UTC 05:00 (盤中分析)
+    # 💡 台灣 13:00 = UTC 05:00
     - cron: '0 5 * * 1-5'
-    # 💡 台灣 15:30 = UTC 07:30 (盤後總結)
+    # 💡 台灣 15:30 = UTC 07:30
     - cron: '30 7 * * 1-5'
-  workflow_dispatch: # 保留手動測試按鈕
+  workflow_dispatch: 
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 簽出代碼
-        uses: actions/checkout@v2
-      - name: 設定 Python
+      - uses: actions/checkout@v2
+      - name: Set up Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.9'
-      - name: 安裝套件
+      - name: Install dependencies
         run: pip install pandas yfinance gspread google-auth
-      - name: 執行分析
+      - name: Run script
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
