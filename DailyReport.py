@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- (💡 請前輩務必同步將上方 app.py 裡的 STOCK_NAMES 與 analyze_strategy 函式複製到此處) ---
+# --- (💡 此處請前輩務必同步將上方 app.py 裡的 STOCK_NAMES 與 analyze_strategy 函式複製到此處) ---
 
 def run_batch():
     try:
@@ -21,7 +21,7 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 強制測試報告：保證不論有無警報都發信，確認連線成功
+            # 💡 強制連線報告：保證不論有無警報都發信，確認連線成功
             notify_list = [f"✅ 股市戰略偵察機連線成功！測試時間：{datetime.now().strftime('%H:%M:%S')}"]
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
