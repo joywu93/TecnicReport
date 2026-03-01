@@ -5,12 +5,16 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. 核心大腦 (同步 7 大戰略與 W底) ---
+# --- 1. 核心大腦 (解決 slice indexing 與 $0.00 問題) ---
 def analyze_strategy(df):
     try:
         if df.empty or len(df) < 240: return None, False
+        # 💡 關鍵修正：拍平雙層標籤，確保索引不報錯
         df.columns = df.columns.get_level_values(0)
-        close, highs, lows, volume = df['Close'].astype(float), df['High'].astype(float), df['Low'].astype(float), df['Volume'].astype(float)
+        close = df['Close'].astype(float).dropna()
+        highs = df['High'].astype(float).dropna()
+        lows = df['Low'].astype(float).dropna()
+        volume = df['Volume'].astype(float).dropna()
         
         curr_p, prev_p = float(close.iloc[-1]), float(close.iloc[-2])
         curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
@@ -21,7 +25,7 @@ def analyze_strategy(df):
         
         msg, is_mail = [], False
 
-        # W底偵測 (60日, 右底不低於左底 3%)
+        # W底偵測 (60日)
         r_l, r_h = lows.tail(60), highs.tail(60)
         t_a_v = float(r_l.min()); t_a_i = r_l.idxmin()
         post_a = r_h.loc[t_a_i:]
@@ -29,13 +33,13 @@ def analyze_strategy(df):
             w_p_v = float(post_a.max()); w_p_i = post_a.idxmax()
             post_b = lows.loc[w_p_i:]
             if len(post_b) > 3:
-                t_c_v = float(post_b.min()); t_c_i = post_b.idxmin()
+                t_c_v = float(post_b.min())
                 if t_c_v >= (t_a_v * 0.97) and (w_p_v - t_a_v)/t_a_v >= 0.10:
                     status = "✨ W底突破" if curr_p > w_p_v else "✨ W底機會"
                     msg.append(f"{status}: 領口距 {((w_p_v-curr_p)/w_p_v)*100:.1f}%")
                     is_mail = True
 
-        # 季線/反彈/背離
+        # 戰略項
         if prev_p < v60 and curr_p > v60: msg.append("🚀 轉多：站上季線"); is_mail = True
         if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: msg.append("🔥 強勢反彈"); is_mail = True
         if curr_v > prev_v * 1.2 and curr_p < v5 and curr_p < prev_p: msg.append("⚠️ 量價背離"); is_mail = True
@@ -43,48 +47,40 @@ def analyze_strategy(df):
         return " | ".join(msg), is_mail
     except: return None, False
 
-# --- 2. 自動化執行程序 (自動讀取 Google Sheet 更新) ---
 def run_batch():
     try:
-        # A. 初始化雲端連線
+        # A. 讀取 Secrets
         creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+        sender, pwd = os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_PASSWORD")
+        if not creds_json or not sender: return
+        
+        # B. 連線 Google Sheet
         creds = Credentials.from_service_account_info(json.loads(creds_json), 
                  scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
         client = gspread.authorize(creds)
         sheet = client.open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
         
-        # B. 讀取所有親友清單
-        records = sheet.get_all_records()
-        sender, pwd = os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_PASSWORD")
-        
-        for row in records:
-            email = row.get('Email')
-            # 💡 自動讀取最新的 Stock_List
-            stock_str = str(row.get('Stock_List', ''))
-            tickers = re.findall(r'\d{4}', stock_str)
-            
+        for row in sheet.get_all_records():
+            email, stocks = row.get('Email'), str(row.get('Stock_List', ''))
+            tickers = re.findall(r'\d{4}', stocks)
             if not email or not tickers: continue
             
             notify_list = []
             for t in tickers:
-                # C. 抓取即時資料並分析
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
                 
                 sig, is_mail = analyze_strategy(df)
                 if is_mail:
-                    notify_list.append(f"【{t}】${df['Close'].iloc[-1]:.2f} | {sig}")
+                    notify_list.append(f"【{t}】${df['Close'].iloc[-1].values[0]:.2f} | {sig}")
             
-            # D. 發送警報信
             if notify_list:
                 msg = MIMEText("\n\n".join(notify_list))
                 msg['Subject'] = f"📈 戰略警報 - {datetime.now().strftime('%m/%d %H:%M')}"
                 msg['From'], msg['To'] = sender, email
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                    server.login(sender, pwd)
-                    server.send_message(msg)
-    except Exception as e:
-        print(f"執行錯誤: {e}")
+                    server.login(sender, pwd); server.send_message(msg)
+    except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
     run_batch()
