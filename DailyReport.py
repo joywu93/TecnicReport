@@ -1,11 +1,4 @@
-import os, gspread, json, re, smtplib
-import pandas as pd
-import yfinance as yf
-from email.mime.text import MIMEText
-from google.oauth2.service_account import Credentials
-from datetime import datetime
-
-# (💡 此處請全選複製上方 app.py 裡的 STOCK_NAMES 與 analyze_strategy 函式，確保邏輯一致)
+# (💡 此處請全選複製上方 app.py 裡的 STOCK_NAMES 與 analyze_strategy 函式)
 
 def run_batch():
     try:
@@ -20,14 +13,15 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 強制通訊測試行：確保休市時也能確認電路正常
-            notify_list = [f"✅ 戰略偵察機連線測試成功！時間：{datetime.now().strftime('%H:%M:%S')}"]
+            # 💡 關鍵修正：notify_list 起始不為空，保證一定會發信
+            notify_list = [f"✅ 戰略巡航連線成功：{datetime.now().strftime('%m/%d %H:%M:%S')}"]
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
                 if not df.empty:
                     sig, p, s60, b, im = analyze_strategy(df)
-                    if im: notify_list.append(f"【{STOCK_NAMES.get(t, t)}】${p:.2f} | {sig}")
+                    if im: # 符合戰略條件才加入
+                        notify_list.append(f"【{STOCK_NAMES.get(t, t)}】${p:.2f} | {sig}")
 
             msg = MIMEText("\n\n".join(notify_list))
             msg['Subject'] = f"📈 戰略巡航回報 - {datetime.now().strftime('%m/%d')}"
