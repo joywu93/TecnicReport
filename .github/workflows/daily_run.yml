@@ -1,36 +1,28 @@
-name: 股市戰略定時發報系統
+name: 股市戰略自動發報
 
 on:
   schedule:
-    # 💡 台灣時間與 UTC 對位說明：
-    # 01:30 UTC = 09:30 台灣時間 (開盤前)
-    # 05:00 UTC = 13:00 台灣時間 (收盤前)
-    # 07:30 UTC = 15:30 台灣時間 (收盤後)
-    - cron: '30 1 * * 1-5'
-    - cron: '0 5 * * 1-5'
-    - cron: '30 7 * * 1-5'
-  workflow_dispatch: # 允許您隨時點擊按鈕手動測試
+    # 💡 台灣 09:10 = UTC 01:10
+    - cron: '10 1 * * 1-5' 
+    # 💡 台灣 13:40 = UTC 05:40
+    - cron: '40 5 * * 1-5'
+  workflow_dispatch: # 保留手動測試按鈕
 
 jobs:
-  run-daily-report:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 檢出代碼 (Checkout)
-        uses: actions/checkout@v3
-
-      - name: 設定 Python 環境
-        uses: actions/setup-python@v4
+      - name: 簽出代碼
+        uses: actions/checkout@v2
+      - name: 設定 Python
+        uses: actions/setup-python@v2
         with:
-          python-version: '3.10'
-
-      - name: 安裝必要套件 (Dependencies)
-        run: |
-          pip install gspread pandas yfinance google-auth
-
-      - name: 執行戰略分析並發信
+          python-version: '3.9'
+      - name: 安裝套件
+        run: pip install pandas yfinance gspread google-auth
+      - name: 執行分析
         env:
-          # 🔐 請務必在 GitHub Settings > Secrets 中設定以下三個標籤
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-        run: python daily_report.py
+        run: python DailyReport.py
