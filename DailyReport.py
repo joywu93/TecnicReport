@@ -5,14 +5,12 @@ from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# (💡 此處請複製與上方 app.py 相同的 STOCK_NAMES 與 analyze_strategy 函式)
+# (💡 此處請全選複製上方 app.py 裡的 STOCK_NAMES 與 analyze_strategy 函式)
 
 def run_batch():
     try:
         creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
         sender, pwd = os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_PASSWORD")
-        if not sender or not pwd: return
-        
         client = gspread.authorize(Credentials.from_service_account_info(json.loads(creds_json), 
                  scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']))
         sheet = client.open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
@@ -22,8 +20,8 @@ def run_batch():
             tickers = re.findall(r'\d{4}', str(row.get('Stock_List', '')))
             if not email: continue
             
-            # 💡 強制測試行，確保休市時也有信確認電路
-            notify_list = [f"✅ 戰略巡航通訊測試：OK ({datetime.now().strftime('%H:%M:%S')})"]
+            # 💡 強制通訊測試行
+            notify_list = [f"✅ 通訊測試成功！執行時間：{datetime.now().strftime('%H:%M:%S')}"]
             for t in tickers:
                 df = yf.download(f"{t}.TW", period="2y", progress=False)
                 if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
