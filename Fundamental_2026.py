@@ -6,8 +6,8 @@ from datetime import datetime
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V11 最新突破版)")
-st.markdown("💡 **系統已強制清除舊暫存！** 若您看到此標題，代表程式碼已成功更新至最新版，不再受舊有錯誤干擾。")
+st.title("📊 股市戰略指揮中心 (V12 終極匯入版)")
+st.markdown("💡 **傳承無痛化：** 未來只需將整理好的 Excel 拖曳至左側，系統將自動套用 VBA 邏輯並計算全年度 EPS。")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -19,11 +19,9 @@ def auto_strategic_model(
     ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev,                   
     recent_payout_ratio, current_price
 ):
-    # 計算去年上下半年營收
     ly_h1_rev = ly_q1_rev + ly_q2_rev
     ly_h2_rev = ly_q3_rev + ly_q4_rev
 
-    # 自動判斷月份
     if current_month == 1:
         est_q1_avg = (rev_last_11 + rev_last_12) / 2
         formula_note = "採上年11、12月均值"
@@ -46,7 +44,6 @@ def auto_strategic_model(
         est_h1_eps = est_q1_eps + (est_q1_eps * (ly_q2_rev / ly_q1_rev))
         est_full_year_eps = est_h1_eps * (1 + (ly_h2_rev / ly_h1_rev))
         
-        # 繪製折線圖所需的各季預估營收
         est_h1_rev_total = est_q1_rev_total + est_q2_rev_total
         est_h2_rev_total = est_h1_rev_total * (ly_h2_rev / ly_h1_rev)
         est_q3_rev_total = est_h2_rev_total * (ly_q3_rev / ly_h2_rev) if ly_h2_rev > 0 else 0
@@ -75,31 +72,33 @@ def auto_strategic_model(
     }
 
 # ==========================================
-# 2. 歷史資料庫 (完全對齊您 Excel 的真實比例)
+# 2. 側邊欄：檔案上傳與時間模擬
 # ==========================================
-stock_db = {
-    "2404": {
-        "name": "漢唐", "rev_last_11": 50, "rev_last_12": 55, "rev_this_1": 60.3, "rev_this_2": 60.3, "rev_this_3": 60.3,
-        "base_q_eps": 16.1, "non_op": 16.2, "base_q_avg_rev": 64.2, 
-        "ly_q1_rev": 115, "ly_q2_rev": 110.6, "ly_q3_rev": 155, "ly_q4_rev": 170.3, 
-        "payout": 85.0, "price": 1130.0
-    },
-    "1522": {
-        "name": "堤維西", "rev_last_11": 20, "rev_last_12": 20, "rev_this_1": 23.1, "rev_this_2": 23.1, "rev_this_3": 23.1,
-        "base_q_eps": 1.17, "non_op": -21.9, "base_q_avg_rev": 23.23, 
-        "ly_q1_rev": 50, "ly_q2_rev": 50, "ly_q3_rev": 55, "ly_q4_rev": 53.3,
-        "payout": 63.0, "price": 44.0
-    }
-}
+st.sidebar.header("📥 資料庫匯入區")
+st.sidebar.info("未來晚輩只需將 Goodinfo 下載的 Excel 拖曳至此，即可瞬間分析百檔股票！")
+uploaded_file = st.sidebar.file_uploader("上傳財報總表 (Excel/CSV)", type=["xlsx", "csv"])
 
-# ==========================================
-# 3. 網頁介面與操作區
-# ==========================================
+st.sidebar.divider()
 st.sidebar.header("⚙️ 系統時間模擬器")
 simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
 
+# ==========================================
+# 3. 執行區塊 (若無上傳檔案，載入預設 2 檔測試)
+# ==========================================
+# 預設測試股池
+stock_db = {
+    "2404": {"name": "漢唐", "rev_last_11": 50, "rev_last_12": 55, "rev_this_1": 60.3, "rev_this_2": 60.3, "rev_this_3": 60.3, "base_q_eps": 16.1, "non_op": 16.2, "base_q_avg_rev": 64.2, "ly_q1_rev": 115, "ly_q2_rev": 110.6, "ly_q3_rev": 155, "ly_q4_rev": 170.3, "payout": 85.0, "price": 1130.0},
+    "1522": {"name": "堤維西", "rev_last_11": 20, "rev_last_12": 20, "rev_this_1": 23.1, "rev_this_2": 23.1, "rev_this_3": 23.1, "base_q_eps": 1.17, "non_op": -21.9, "base_q_avg_rev": 23.23, "ly_q1_rev": 50, "ly_q2_rev": 50, "ly_q3_rev": 55, "ly_q4_rev": 53.3, "payout": 63.0, "price": 44.0}
+}
+
 if st.button(f"🚀 執行 {simulated_month} 月份戰略分析", type="primary"):
     with st.spinner("正在執行 VBA 核心運算..."):
+        
+        # 💡 未來這裡將加入讀取 uploaded_file 的邏輯
+        if uploaded_file is not None:
+            st.success(f"讀取到檔案：{uploaded_file.name} (即將開放自動解析功能)")
+            # 這裡之後會寫自動模糊比對欄位的程式碼
+        
         results = []
         for code, data in stock_db.items():
             res = auto_strategic_model(
@@ -112,15 +111,14 @@ if st.button(f"🚀 執行 {simulated_month} 月份戰略分析", type="primary"
             )
             results.append(res)
             
-        # 💡 強制使用全新記憶體鑰匙 (df_v11) 避開舊快取當機
-        st.session_state["df_v11"] = pd.DataFrame(results)
+        st.session_state["df_v12"] = pd.DataFrame(results)
         st.success("✅ 分析完成！")
 
 # ==========================================
-# 4. 個股深度分析圖表與總表
+# 4. 圖表與報表呈現
 # ==========================================
-if "df_v11" in st.session_state:
-    df = st.session_state["df_v11"]
+if "df_v12" in st.session_state:
+    df = st.session_state["df_v12"]
     
     st.divider()
     st.subheader("📈 個股營收軌跡對比 (去年度實際 vs 今年度預估)")
@@ -129,13 +127,11 @@ if "df_v11" in st.session_state:
     selected_stock = st.selectbox("📌 請選擇要查看的個股：", sorted_stock_list)
     
     stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
-    
     chart_data = pd.DataFrame({
         "去年度實際營收(億)": stock_row["_ly_qs"],
         "今年度模型預估(億)": stock_row["_est_qs"]
     }, index=["Q1", "Q2", "Q3", "Q4"])
     
-    # 💡 確保折線圖正確繪製
     st.line_chart(chart_data)
 
     st.markdown(f"**【{selected_stock}】核心指標：** 預估全年度 EPS **{stock_row['預估今年度_EPS']} 元** ｜ 本益比 **{stock_row['本益比(PER)']} 倍** ｜ 前瞻殖利率 **{stock_row['前瞻殖利率(%)']}%**")
@@ -151,16 +147,9 @@ if "df_v11" in st.session_state:
         return f'color: {color}; font-weight: {weight}'
     
     format_dict = {
-        "當季預估均營收": "{:.2f}", 
-        "季成長率(YoY)%": "{:.2f}%", 
-        "預估今年Q1_EPS": "{:.2f}", 
-        "預估今年度_EPS": "{:.2f}", 
-        "本益比(PER)": "{:.2f}",
-        "運算配息率(%)": "{:.2f}%", 
-        "前瞻殖利率(%)": "{:.2f}%"
+        "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", 
+        "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", 
+        "本益比(PER)": "{:.2f}", "運算配息率(%)": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%"
     }
 
-    st.dataframe(
-        display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict),
-        use_container_width=True
-    )
+    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), use_container_width=True)
