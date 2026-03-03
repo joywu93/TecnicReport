@@ -2,13 +2,37 @@ import streamlit as st
 import pandas as pd
 import io
 import altair as alt
+import re
 
 # ==========================================
-# 網頁基本設定
+# 網頁基本設定與 CSS 卷軸加寬魔法
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V24 戰情置頂版)")
-st.markdown("💡 **版面淨化：** 新增「VIP 置頂關注」功能，並將繁瑣公式移至表頭備註，畫面更清爽！")
+
+# 💡 升級亮點：利用 CSS 強制將網頁的捲軸 (Scrollbar) 放大加粗 2 倍！
+st.markdown("""
+    <style>
+    ::-webkit-scrollbar {
+        width: 18px !important;  /* 垂直卷軸寬度 */
+        height: 18px !important; /* 水平卷軸高度 */
+    }
+    ::-webkit-scrollbar-track {
+        background: #f1f1f1; 
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #888; 
+        border-radius: 10px;
+        border: 3px solid #f1f1f1;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #555; 
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("📊 股市戰略指揮中心 (V25 旗艦版)")
+st.markdown("💡 **版面淨化：** 支援多種分隔符號防呆輸入、雙重權重排序、以及加倍放大的好拉卷軸！")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -69,17 +93,21 @@ def auto_strategic_model(
 
     return {
         "股票名稱": name, "最新股價": current_price, "套用公式": formula_note,
-        "當季預估均營收": round(est_q1_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
-        "預估今年Q1_EPS": round(est_q1_eps, 2), "預估今年度_EPS": round(est_full_year_eps, 2), 
-        "預估年成長率(%)": round(est_annual_yoy, 2),
-        "本益比(PER)": round(est_per, 2), "前瞻殖利率(%)": round(forward_yield, 2), "運算配息率(%)": calc_payout_ratio,
+        "當季預估均營收": round(est_q1_avg, 2), 
+        "季成長率(YoY)%": round(q1_yoy, 2),
+        "前瞻殖利率(%)": round(forward_yield, 2), # 💡 挪到季成長率後面
+        "預估今年Q1_EPS": round(est_q1_eps, 2), 
+        "預估今年度_EPS": round(est_full_year_eps, 2), 
+        "本益比(PER)": round(est_per, 2),         # 💡 與年成長率對調
+        "預估年成長率(%)": round(est_annual_yoy, 2), 
+        "運算配息率(%)": calc_payout_ratio,
         "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev],
         "_known_qs": [known_q1, 0, 0, 0],
         "_pure_est_qs": [pure_est_q1, est_q2_rev_total, est_q3_rev_total, est_q4_rev_total]
     }
 
 # ==========================================
-# 2. 側邊欄：檔案上傳與設定
+# 2. 側邊欄：檔案上傳與VIP清單
 # ==========================================
 st.sidebar.header("📥 資料庫匯入區")
 uploaded_file = st.sidebar.file_uploader("上傳 個股營收表 (僅限 CSV)", type=["csv"])
@@ -89,9 +117,9 @@ st.sidebar.header("⚙️ 系統參數設定")
 simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
 
 st.sidebar.divider()
-# 💡 重大升級：VIP 核心名單置頂輸入框
 st.sidebar.header("📌 核心關注名單 (VIP置頂)")
-watch_list_input = st.sidebar.text_input("輸入代號 (多檔用逗號分隔)", value="8358, 8383", help="輸入的個股將會強制排在總表的最上方！")
+# 💡 防呆提示：支援多種符號
+watch_list_input = st.sidebar.text_input("輸入代號 (支援空白、逗號、分號)", value="8358; 8383 8390", help="不論您用空白、分號或逗號，系統都會自動辨識！重複輸入也會自動過濾。")
 
 # ==========================================
 # 3. CSV 專屬直連解析引擎
@@ -153,7 +181,7 @@ if uploaded_file is not None:
                 "payout": get_val(c_payout), "price": get_val(c_price)
             }
         
-        st.session_state["stock_db_v24"] = stock_db
+        st.session_state["stock_db_v25"] = stock_db
         st.success(f"✅ CSV 檔案讀取大成功！已抓取 {len(stock_db)} 檔股票。")
 
     except Exception as e:
@@ -162,12 +190,12 @@ if uploaded_file is not None:
 # ==========================================
 # 4. 執行運算與報表呈現
 # ==========================================
-if "stock_db_v24" in st.session_state:
+if "stock_db_v25" in st.session_state:
     if st.button(f"🚀 開始執行 {simulated_month} 月份戰略分析", type="primary"):
         with st.spinner("正在執行 VBA 核心運算，請稍候..."):
             results = []
             current_rule_note = ""
-            for code, data in st.session_state["stock_db_v24"].items():
+            for code, data in st.session_state["stock_db_v25"].items():
                 res = auto_strategic_model(
                     name=f"{code} {data['name']}", current_month=simulated_month,
                     rev_last_11=data["rev_last_11"], rev_last_12=data["rev_last_12"], 
@@ -176,21 +204,19 @@ if "stock_db_v24" in st.session_state:
                     ly_q1_rev=data["ly_q1_rev"], ly_q2_rev=data["ly_q2_rev"], ly_q3_rev=data["ly_q3_rev"], ly_q4_rev=data["ly_q4_rev"],
                     recent_payout_ratio=data["payout"], current_price=data["price"]
                 )
-                current_rule_note = res["套用公式"] # 擷取公式文字
+                current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v24"] = pd.DataFrame(results)
+            st.session_state["df_final_v25"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
             st.success("✅ 分析完成！")
 
-if "df_final_v24" in st.session_state:
-    df = st.session_state["df_final_v24"].copy()
+if "df_final_v25" in st.session_state:
+    df = st.session_state["df_final_v25"].copy()
     
     st.divider()
     st.subheader("📊 季營收動能對比 (同期並列柱狀圖)")
     
-    # 💡 提示：下拉選單可以直接打字搜尋代號喔！
-    st.markdown("💡 *提示：您可以直接在下方的選單內「打字輸入股票代號」，系統會自動搜尋。*")
     selected_stock = st.selectbox("📌 請點擊此處並輸入代號或名稱：", sorted(df["股票名稱"].tolist()))
     stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
     
@@ -215,23 +241,42 @@ if "df_final_v24" in st.session_state:
     st.divider()
     st.subheader("🧮 2026 戰略預估數據總表")
     
-    # 💡 版面淨化：將每行都有的「套用公式」拿掉，改在表頭顯示一次就好
     st.info(f"⚙️ **當前預估邏輯：** 因為目前設定為 {simulated_month} 月份，系統已自動採用 **「{st.session_state['current_rule_note']}」** 來推算今年 Q1 營收。")
     
     display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
     
-    # 💡 置頂邏輯：判斷股票名稱是否包含使用者輸入的代號
-    watch_list = [c.strip() for c in watch_list_input.split(",") if c.strip()]
+    # 💡 萬能名單解析器：自動過濾分號、逗號、空白、Tab、並自動去重複！
+    raw_list = re.split(r'[;,\s\t]+', watch_list_input)
+    watch_list = list(dict.fromkeys([c.strip() for c in raw_list if c.strip()]))
+    
     if watch_list:
         display_df['is_vip'] = display_df['股票名稱'].apply(lambda x: 1 if any(w in x for w in watch_list) else 0)
-        # 把 VIP 排在最上面 (is_vip=1)，然後再按照代號排序
-        display_df = display_df.sort_values(by=['is_vip', '股票名稱'], ascending=[False, True]).drop(columns=['is_vip'])
+        # 💡 雙引擎排序：先排 VIP，再排「季成長率(YoY)%」最高，再排「前瞻殖利率(%)」最高
+        display_df = display_df.sort_values(
+            by=['is_vip', '季成長率(YoY)%', '前瞻殖利率(%)'], 
+            ascending=[False, False, False]
+        ).drop(columns=['is_vip'])
+    else:
+        # 若沒有 VIP，就直接全局按 季成長率 -> 殖利率 排序
+        display_df = display_df.sort_values(
+            by=['季成長率(YoY)%', '前瞻殖利率(%)'], 
+            ascending=[False, False]
+        )
     
+    # 💡 依照您指定的欄位順序排列
+    cols_order = [
+        "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", 
+        "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", 
+        "預估年成長率(%)", "運算配息率(%)"
+    ]
+    display_df = display_df[["股票名稱", "最新股價"] + cols_order]
+    
+    # 凍結股票名稱與股價
     display_df = display_df.set_index(["股票名稱", "最新股價"])
     
     def highlight_yield(val):
         color = '#ff4b4b' if isinstance(val, (int, float)) and val >= 4.0 else ''
         return f'color: {color}; font-weight: {"bold" if color else "normal"}'
     
-    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "本益比(PER)": "{:.2f}", "運算配息率(%)": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%"}
+    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%"}
     st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), use_container_width=True)
