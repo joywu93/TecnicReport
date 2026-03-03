@@ -8,8 +8,8 @@ import yfinance as yf
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V14 終極防護裝甲版)")
-st.markdown("💡 **新增資料透視鏡：** 上傳檔案後，系統會先讓您「預覽」抓到的基礎數據，確保 100% 能成功執行！")
+st.title("📊 股市戰略指揮中心 (V15 終極量身打造版)")
+st.markdown("💡 **專屬解碼器已啟動：** 針對 Goodinfo 匯出格式進行深度解析，解決卡頓當機問題！")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -71,7 +71,7 @@ def auto_strategic_model(
 # 2. 側邊欄：檔案上傳與設定
 # ==========================================
 st.sidebar.header("📥 資料庫匯入區")
-uploaded_file = st.sidebar.file_uploader("上傳財報 CSV/Excel", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("上傳財報 CSV 或 Excel", type=["xlsx", "csv"])
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ 系統參數設定")
@@ -79,21 +79,21 @@ simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
 use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取即時股價 (不勾選則用表單股價瞬間完成)", value=False)
 
 # ==========================================
-# 3. 萬能資料解析引擎
+# 3. 專屬資料解析引擎 (一上傳立刻預覽)
 # ==========================================
 if uploaded_file is not None:
     try:
+        # 強制讀取：針對 Goodinfo 格式最佳化
         uploaded_file.seek(0)
         file_name = uploaded_file.name.lower()
         
-        # 💡 萬能解碼器：使用 python engine 自動判斷分隔符號
         if file_name.endswith('.xlsx'):
             df_upload = pd.read_excel(uploaded_file)
         else:
-            try: df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig', sep=None, engine='python')
+            try: df_upload = pd.read_csv(uploaded_file, encoding='cp950') # 台灣最常見編碼
             except: 
                 uploaded_file.seek(0)
-                df_upload = pd.read_csv(uploaded_file, encoding='cp950', sep=None, engine='python')
+                df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
                 
         cols = df_upload.columns.tolist()
         
@@ -105,17 +105,22 @@ if uploaded_file is not None:
         c_code = find_col(r'代號')
         c_name = find_col(r'名稱')
         
-        # 💡 防呆檢查：如果連「代號」都找不到，把所有欄位印出來方便除錯
         if not c_code:
-            st.error(f"❌ 解析失敗：找不到「代號」欄位！請確認檔案內容。系統讀取到的前 10 個欄位為：{cols[:10]}")
+            st.error("❌ 找不到「代號」欄位！請確認這是否為 Goodinfo 的匯出表。")
             st.stop()
 
         c_price = find_col(r'成交')
-        c_rev_10, c_rev_11, c_rev_12 = find_col(r'10單月營收'), find_col(r'11單月營收'), find_col(r'12單月營收')
-        c_rev_1, c_rev_2, c_rev_3 = find_col(r'(01|1)單月營收'), find_col(r'(02|2)單月營收'), find_col(r'(03|3)單月營收')
-        c_ly_q1, c_ly_q2, c_ly_q3, c_ly_q4 = find_col(r'Q1.*單季營收'), find_col(r'Q2.*單季營收'), find_col(r'Q3.*單季營收'), find_col(r'Q4.*單季營收')
-        c_eps_q3, c_eps_q4 = find_col(r'Q3.*每股盈餘'), find_col(r'Q4.*每股盈餘')
-        c_non_op, c_payout = find_col(r'業外損益'), find_col(r'盈餘總分配率')
+        c_rev_10, c_rev_11, c_rev_12 = find_col(r'M10單月營收'), find_col(r'M11單月營收'), find_col(r'M12單月營收')
+        c_rev_1, c_rev_2, c_rev_3 = find_col(r'M01單月營收'), find_col(r'M02單月營收'), find_col(r'M03單月營收')
+        c_non_op, c_payout = find_col(r'業外損益'), find_col(r'分配率')
+
+        # 💡 終極防呆：自動偵測「最新年份」，避免跨年度抓錯
+        q3_eps_col = find_col(r'Q3.*每股盈餘')
+        year_prefix = q3_eps_col[:2] if q3_eps_col else "25" # 預設25年
+        
+        c_eps_q4, c_eps_q3 = find_col(rf'{year_prefix}Q4.*每股盈餘'), find_col(rf'{year_prefix}Q3.*每股盈餘')
+        c_ly_q1, c_ly_q2 = find_col(rf'{year_prefix}Q1.*營收'), find_col(rf'{year_prefix}Q2.*營收')
+        c_ly_q3, c_ly_q4 = find_col(rf'{year_prefix}Q3.*營收'), find_col(rf'{year_prefix}Q4.*營收')
 
         stock_db = {}
         for idx, row in df_upload.iterrows():
@@ -125,7 +130,7 @@ if uploaded_file is not None:
             def get_val(col_name, default=0.0):
                 if col_name and pd.notna(row[col_name]):
                     try: 
-                        val_str = str(row[col_name]).replace(',', '').replace(';', '').replace(' ', '').strip()
+                        val_str = str(row[col_name]).replace(',', '').replace(' ', '').strip()
                         if val_str in ['-', '']: return default
                         return float(val_str)
                     except: return default
@@ -134,7 +139,9 @@ if uploaded_file is not None:
             eps_q4, eps_q3 = get_val(c_eps_q4), get_val(c_eps_q3)
             rev_q4, rev_q3 = get_val(c_ly_q4), get_val(c_ly_q3)
             
+            # 若 Q4 營收未出，自動加總 10, 11, 12 月營收
             if rev_q4 == 0: rev_q4 = get_val(c_rev_10) + get_val(c_rev_11) + get_val(c_rev_12)
+            
             if eps_q4 != 0 and rev_q4 != 0: base_eps, base_rev_avg = eps_q4, rev_q4 / 3
             else: base_eps, base_rev_avg = eps_q3, (rev_q3 / 3 if rev_q3 != 0 else 0)
 
@@ -148,31 +155,28 @@ if uploaded_file is not None:
                 "payout": get_val(c_payout), "price": get_val(c_price)
             }
         
-        # 💡 將解析成功的資料鎖入記憶體 (防止按鈕失憶)
-        st.session_state["stock_db"] = stock_db
+        # 將資料鎖入系統記憶，防止按鈕失憶
+        st.session_state["stock_db_v15"] = stock_db
         
-        # 💡 資料透視鏡：顯示前 3 筆抓到的資料讓使用者安心
-        st.success(f"✅ 檔案讀取成功！成功抓取 {len(stock_db)} 檔股票。 (以下為前 3 筆資料預覽)")
-        preview_data = []
-        for i, (k, v) in enumerate(stock_db.items()):
-            if i >= 3: break
-            preview_data.append({"股票代號": k, "名稱": v['name'], "基礎EPS": v['base_q_eps'], "基準均營收": round(v['base_q_avg_rev'], 2)})
+        # 💡 資料透視鏡：一上傳立刻顯示前 3 筆，讓您安心！
+        st.success(f"✅ 檔案讀取成功！成功過濾並抓取 {len(stock_db)} 檔股票。 (以下為前 3 筆資料預覽)")
+        preview_data = [{"股票代號": k, "名稱": v['name'], "基礎EPS": v['base_q_eps'], "基準均營收": round(v['base_q_avg_rev'], 2)} for i, (k, v) in enumerate(stock_db.items()) if i < 3]
         st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
 
     except Exception as e:
-        st.error(f"檔案解析發生嚴重錯誤：{e}")
+        st.error(f"檔案解析發生錯誤，請截圖此錯誤代碼：{e}")
 
-if "stock_db" not in st.session_state or not st.session_state["stock_db"]:
+if "stock_db_v15" not in st.session_state:
     st.info("請從左側上傳您的 CSV/Excel 檔案。")
 
 # ==========================================
 # 4. 執行運算區塊
 # ==========================================
-if "stock_db" in st.session_state and st.session_state["stock_db"]:
+if "stock_db_v15" in st.session_state:
     if st.button(f"🚀 開始執行 {simulated_month} 月份戰略分析", type="primary"):
         with st.spinner("正在執行 VBA 核心運算，請稍候..."):
             results = []
-            db = st.session_state["stock_db"]
+            db = st.session_state["stock_db_v15"]
             progress_bar = st.progress(0)
             
             for i, (code, data) in enumerate(db.items()):
@@ -180,9 +184,7 @@ if "stock_db" in st.session_state and st.session_state["stock_db"]:
                 
                 if use_yahoo_price:
                     try: live_price = yf.Ticker(f"{code}.TW").history(period="1d")['Close'].iloc[-1]
-                    except: 
-                        try: live_price = yf.Ticker(f"{code}.TWO").history(period="1d")['Close'].iloc[-1]
-                        except: live_price = data["price"] if data["price"] > 0 else 100
+                    except: live_price = data["price"] if data["price"] > 0 else 100
                 else:
                     live_price = data["price"] if data["price"] > 0 else 100
                 
@@ -196,15 +198,15 @@ if "stock_db" in st.session_state and st.session_state["stock_db"]:
                 )
                 results.append(res)
                 
-            st.session_state["df_final"] = pd.DataFrame(results)
+            st.session_state["df_final_v15"] = pd.DataFrame(results)
             progress_bar.empty()
             st.success("✅ 分析完成！請滾動至下方查看總表。")
 
 # ==========================================
 # 5. 圖表與報表呈現
 # ==========================================
-if "df_final" in st.session_state:
-    df = st.session_state["df_final"]
+if "df_final_v15" in st.session_state:
+    df = st.session_state["df_final_v15"]
     
     st.divider()
     st.subheader("📈 個股營收軌跡對比 (去年度實際 vs 今年度預估)")
