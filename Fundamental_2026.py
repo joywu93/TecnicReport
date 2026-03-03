@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
 import io
+import altair as alt
 
 # ==========================================
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V22 凍結視窗與三色圖表版)")
-st.markdown("💡 **升級亮點：** 報表左側名稱與股價已自動凍結！圖表新增「已公布」與「純預估」的分離長條圖。")
+st.title("📊 股市戰略指揮中心 (V23 並列柱狀圖滿配版)")
+st.markdown("💡 **圖表大升級：** 季營收改採「3 根柱子並列」呈現，並新增「預估年成長率」核心指標！")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -46,7 +47,7 @@ def auto_strategic_model(
     if ly_q1_rev > 0 and ly_h1_rev > 0:
         est_q2_rev_total = est_q1_rev_total * (ly_q2_rev / ly_q1_rev)
         est_h1_eps = est_q1_eps + (est_q1_eps * (ly_q2_rev / ly_q1_rev))
-        est_full_year_eps = est_h1_eps * (1 + (ly_h2_rev / ly_h1_rev)) # 💡 等待您提供新的推算邏輯
+        est_full_year_eps = est_h1_eps * (1 + (ly_h2_rev / ly_h1_rev)) 
         
         est_h1_rev_total = est_q1_rev_total + est_q2_rev_total
         est_h2_rev_total = est_h1_rev_total * (ly_h2_rev / ly_h1_rev)
@@ -55,6 +56,11 @@ def auto_strategic_model(
     else:
         est_full_year_eps = 0
         est_q2_rev_total = est_q3_rev_total = est_q4_rev_total = 0
+
+    # 計算預估年成長率 (YoY)
+    ly_total_rev = ly_q1_rev + ly_q2_rev + ly_q3_rev + ly_q4_rev
+    est_total_rev = est_q1_rev_total + est_q2_rev_total + est_q3_rev_total + est_q4_rev_total
+    est_annual_yoy = ((est_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
 
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio == 0 else recent_payout_ratio)
@@ -67,6 +73,7 @@ def auto_strategic_model(
         "股票名稱": name, "最新股價": current_price, "套用公式": formula_note,
         "當季預估均營收": round(est_q1_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "預估今年Q1_EPS": round(est_q1_eps, 2), "預估今年度_EPS": round(est_full_year_eps, 2), 
+        "預估年成長率(%)": round(est_annual_yoy, 2), # 💡 新增的年成長率指標
         "本益比(PER)": round(est_per, 2), "前瞻殖利率(%)": round(forward_yield, 2), "運算配息率(%)": calc_payout_ratio,
         "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev],
         "_known_qs": [known_q1, 0, 0, 0],
@@ -143,7 +150,7 @@ if uploaded_file is not None:
                 "payout": get_val(c_payout), "price": get_val(c_price)
             }
         
-        st.session_state["stock_db_v22"] = stock_db
+        st.session_state["stock_db_v23"] = stock_db
         st.success(f"✅ CSV 檔案讀取大成功！已抓取 {len(stock_db)} 檔股票。請點擊下方按鈕執行運算。")
 
     except Exception as e:
@@ -152,11 +159,11 @@ if uploaded_file is not None:
 # ==========================================
 # 4. 執行運算與報表呈現
 # ==========================================
-if "stock_db_v22" in st.session_state:
+if "stock_db_v23" in st.session_state:
     if st.button(f"🚀 開始執行 {simulated_month} 月份戰略分析", type="primary"):
         with st.spinner("正在執行 VBA 核心運算，請稍候..."):
             results = []
-            for code, data in st.session_state["stock_db_v22"].items():
+            for code, data in st.session_state["stock_db_v23"].items():
                 res = auto_strategic_model(
                     name=f"{code} {data['name']}", current_month=simulated_month,
                     rev_last_11=data["rev_last_11"], rev_last_12=data["rev_last_12"], 
@@ -166,39 +173,49 @@ if "stock_db_v22" in st.session_state:
                     recent_payout_ratio=data["payout"], current_price=data["price"]
                 )
                 results.append(res)
-            st.session_state["df_final_v22"] = pd.DataFrame(results)
+            st.session_state["df_final_v23"] = pd.DataFrame(results)
             st.success("✅ 分析完成！")
 
-if "df_final_v22" in st.session_state:
-    df = st.session_state["df_final_v22"]
+if "df_final_v23" in st.session_state:
+    df = st.session_state["df_final_v23"]
     
     st.divider()
-    st.subheader("📊 季營收動能對比 (三色長條圖：去年實際 vs 今年已公布 vs 今年預估)")
+    st.subheader("📊 季營收動能對比 (同期並列柱狀圖)")
     selected_stock = st.selectbox("📌 請選擇要查看的個股：", sorted(df["股票名稱"].tolist()))
-    
     stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
     
-    # 💡 視覺大變身：三種維度的長條圖
+    # 💡 視覺大變身：利用 Altair 產生 3 根柱子並排的群組長條圖
     chart_data = pd.DataFrame({
-        "去年實際(億)": stock_row["_ly_qs"],
-        "今年已公布(億)": stock_row["_known_qs"],
-        "今年純預估(億)": stock_row["_pure_est_qs"]
-    }, index=["Q1", "Q2", "Q3", "Q4"])
+        "季度": ["Q1", "Q2", "Q3", "Q4"],
+        "1.去年實際(億)": stock_row["_ly_qs"],
+        "2.今年已公布(億)": stock_row["_known_qs"],
+        "3.今年純預估(億)": stock_row["_pure_est_qs"]
+    })
+    # 資料轉換以符合 Altair 格式
+    chart_data_melt = chart_data.melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
     
-    st.bar_chart(chart_data, use_container_width=True)
+    bars = alt.Chart(chart_data_melt).mark_bar().encode(
+        x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)), # 隱藏底下的副標籤
+        y=alt.Y('營收(億):Q', title='營收(億)'),
+        color=alt.Color('營收類別:N', legend=alt.Legend(title="指標圖例", orient="bottom")),
+        column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
+    ).properties(width=150, height=350)
     
-    st.markdown(f"**【{selected_stock}】核心指標：** 預估全年度 EPS **{stock_row['預估今年度_EPS']} 元** ｜ 本益比 **{stock_row['本益比(PER)']} 倍** ｜ 前瞻殖利率 **{stock_row['前瞻殖利率(%)']}%**")
+    st.altair_chart(bars, use_container_width=False)
+    
+    # 💡 新增「預估年成長率(%)」於核心指標
+    st.markdown(f"**【{selected_stock}】核心指標：** 預估全年度 EPS **{stock_row['預估今年度_EPS']} 元** ｜ 本益比 **{stock_row['本益比(PER)']} 倍** ｜ 前瞻殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ 預估年成長率 **{stock_row['預估年成長率(%)']}%**")
     
     st.divider()
     st.subheader("🧮 2026 戰略預估數據總表 (左側名稱與股價已凍結)")
     display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs"])
     
-    # 💡 凍結欄位秘訣：把想要凍結的欄位設定為 DataFrame 的 Index
+    # 凍結欄位
     display_df = display_df.set_index(["股票名稱", "最新股價"])
     
     def highlight_yield(val):
         color = '#ff4b4b' if isinstance(val, (int, float)) and val >= 4.0 else ''
         return f'color: {color}; font-weight: {"bold" if color else "normal"}'
     
-    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "運算配息率(%)": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%"}
+    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "本益比(PER)": "{:.2f}", "運算配息率(%)": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%"}
     st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), use_container_width=True)
