@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V31 圖表瘦身版)")
+st.title("📊 2026 戰略指揮 (V32 欄位精準版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -142,9 +142,16 @@ try:
         c_y1_q1, c_y1_q2, c_y1_q3, c_y1_q4 = get_col(f"{y1}Q1", "營收"), get_col(f"{y1}Q2", "營收"), get_col(f"{y1}Q3", "營收"), get_col(f"{y1}Q4", "營收")
         c_rev_10, c_non_op, c_payout = get_col("10單月營收"), get_col("業外損益"), get_col("分配率")
         
-        c_liab = get_col("合約負債")
+        # 💡 V32 修正：強制切開「絕對值」與「季增率」的抓取條件
         c_liab_qoq = get_col("合約負債季增")
         if not c_liab_qoq: c_liab_qoq = get_col("季增", "負債")
+        
+        c_liab = None
+        for c in reversed(cols):
+            # 必須包含合約負債，但絕對不能包含「季增」或「%」
+            if "合約負債" in c and "季增" not in c and "%" not in c:
+                c_liab = c
+                break
 
         stock_db = {}
         for idx, row in df_upload.iterrows():
@@ -177,18 +184,18 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
         
-        st.session_state["stock_db_v31"] = stock_db
+        st.session_state["stock_db_v32"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v31" in st.session_state:
+if "stock_db_v32" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v31"].items():
+            for code, data in st.session_state["stock_db_v32"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: price = yf.Ticker(f"{code}.TW").history(period="1d")['Close'].iloc[-1]
@@ -206,11 +213,11 @@ if "stock_db_v31" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v31"] = pd.DataFrame(results)
+            st.session_state["df_final_v32"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v31" in st.session_state:
-    df = st.session_state["df_final_v31"].copy()
+if "df_final_v32" in st.session_state:
+    df = st.session_state["df_final_v32"].copy()
     
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
@@ -232,7 +239,6 @@ if "df_final_v31" in st.session_state:
             "2.今年已公布": stock_row["_known_qs"], "3.今年純預估": stock_row["_pure_est_qs"]
         }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
         
-        # 💡 圖表瘦身還原：給予每一季一個固定且俐落的寬度 (width=55)，關閉自動填滿
         bars = alt.Chart(chart_data).mark_bar().encode(
             x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top")),
