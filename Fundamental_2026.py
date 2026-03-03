@@ -8,8 +8,8 @@ import yfinance as yf
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V13 智能解析版)")
-st.markdown("💡 **全自動化達成：** 上傳 Goodinfo 報表後，系統將「自動識別」欄位名稱，免除人工改名煩惱！")
+st.title("📊 股市戰略指揮中心 (V13.1 雙格式完美支援版)")
+st.markdown("💡 **全自動化達成：** 支援直接上傳原汁原味的 **.xlsx (Excel)** 或 **.csv** 檔案！系統將自動識別欄位。")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -77,12 +77,12 @@ def auto_strategic_model(
 # 2. 側邊欄：檔案上傳與設定
 # ==========================================
 st.sidebar.header("📥 資料庫匯入區")
-uploaded_file = st.sidebar.file_uploader("上傳 Goodinfo 財報總表 (Excel/CSV)", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("上傳 Goodinfo 財報總表 (支援 Excel xlsx 或 CSV)", type=["xlsx", "csv"])
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ 系統參數設定")
 simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
-use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取最新股價 (若打勾約需等1~2分鐘；不打勾則使用 Excel 內建股價，瞬間完成)", value=False)
+use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取即時股價 (若打勾需等1~2分鐘；不打勾則用 Excel 內建股價，瞬間完成)", value=False)
 
 # ==========================================
 # 3. 資料解析與執行區塊
@@ -91,12 +91,16 @@ stock_db = {}
 
 if uploaded_file is not None:
     try:
-        # 嘗試讀取 CSV (處理台灣常見編碼)
-        try: df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-        except UnicodeDecodeError: 
-            uploaded_file.seek(0)
-            df_upload = pd.read_csv(uploaded_file, encoding='cp950')
-            
+        # 💡 自動判斷副檔名，決定使用 Excel 引擎或 CSV 引擎
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith('.xlsx'):
+            df_upload = pd.read_excel(uploaded_file)
+        else:
+            try: df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+            except UnicodeDecodeError: 
+                uploaded_file.seek(0)
+                df_upload = pd.read_csv(uploaded_file, encoding='cp950')
+                
         cols = df_upload.columns.tolist()
         
         # 💡 強大的模糊比對函數 (Regex)
@@ -105,7 +109,7 @@ if uploaded_file is not None:
                 if re.search(pattern, c): return c
             return None
             
-        # 尋找對應欄位
+        # 尋找對應欄位 (完全不用管是哪一年度)
         c_code = find_col(r'代號')
         c_name = find_col(r'名稱')
         c_price = find_col(r'成交')
@@ -115,14 +119,13 @@ if uploaded_file is not None:
         c_rev_2 = find_col(r'(02|2)單月營收')
         c_rev_3 = find_col(r'(03|3)單月營收')
         
-        # 抓取2025年(去年)營收
-        c_ly_q1 = find_col(r'25Q1.*營收')
-        c_ly_q2 = find_col(r'25Q2.*營收')
-        c_ly_q3 = find_col(r'25Q3.*營收')
-        c_ly_q4 = find_col(r'25Q4.*營收')
+        c_ly_q1 = find_col(r'Q1.*單季營收')
+        c_ly_q2 = find_col(r'Q2.*單季營收')
+        c_ly_q3 = find_col(r'Q3.*單季營收')
+        c_ly_q4 = find_col(r'Q4.*單季營收')
         
-        c_eps_q3 = find_col(r'25Q3.*每股盈餘')
-        c_eps_q4 = find_col(r'25Q4.*每股盈餘')
+        c_eps_q3 = find_col(r'Q3.*每股盈餘')
+        c_eps_q4 = find_col(r'Q4.*每股盈餘')
         c_non_op = find_col(r'業外損益')
         c_payout = find_col(r'盈餘總分配率')
 
@@ -131,9 +134,9 @@ if uploaded_file is not None:
             code = str(row[c_code]).split('.')[0] if c_code and pd.notna(row[c_code]) else ""
             if not code.isdigit(): continue # 略過空行
             
-            def get_val(c_name, default=0.0):
-                if c_name and pd.notna(row[c_name]):
-                    try: return float(row[c_name])
+            def get_val(col_name, default=0.0):
+                if col_name and pd.notna(row[col_name]):
+                    try: return float(row[col_name])
                     except: return default
                 return default
             
@@ -157,16 +160,12 @@ if uploaded_file is not None:
             }
         st.success(f"✅ 成功解析檔案！共載入 {len(stock_db)} 檔股票資料。請點擊下方按鈕執行分析。")
     except Exception as e:
-        st.error(f"檔案解析失敗，請確認是否為正確的 CSV 格式。錯誤代碼：{e}")
+        st.error(f"檔案解析失敗，請確認上傳的是否為正確的 Excel 或 CSV。錯誤代碼：{e}")
 
-# 若無上傳檔案，載入預設 2 檔測試
 if not stock_db:
-    stock_db = {
-        "2404": {"name": "漢唐", "rev_last_11": 50, "rev_last_12": 55, "rev_this_1": 60.3, "rev_this_2": 60.3, "rev_this_3": 60.3, "base_q_eps": 16.1, "non_op": 16.2, "base_q_avg_rev": 64.2, "ly_q1_rev": 115, "ly_q2_rev": 110.6, "ly_q3_rev": 155, "ly_q4_rev": 170.3, "payout": 85.0, "price": 1130.0},
-        "1522": {"name": "堤維西", "rev_last_11": 20, "rev_last_12": 20, "rev_this_1": 23.1, "rev_this_2": 23.1, "rev_this_3": 23.1, "base_q_eps": 1.17, "non_op": -21.9, "base_q_avg_rev": 23.23, "ly_q1_rev": 50, "ly_q2_rev": 50, "ly_q3_rev": 55, "ly_q4_rev": 53.3, "payout": 63.0, "price": 44.0}
-    }
+    st.info("請從左側上傳您的 Excel 或 CSV 檔案以開始分析百檔股票。")
 
-if st.button(f"🚀 執行 {simulated_month} 月份戰略分析", type="primary"):
+if stock_db and st.button(f"🚀 執行 {simulated_month} 月份戰略分析", type="primary"):
     with st.spinner("正在執行 VBA 核心運算..."):
         results = []
         progress_bar = st.progress(0)
