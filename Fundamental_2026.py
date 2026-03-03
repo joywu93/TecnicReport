@@ -8,8 +8,8 @@ import yfinance as yf
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V13.1 雙格式完美支援版)")
-st.markdown("💡 **全自動化達成：** 支援直接上傳原汁原味的 **.xlsx (Excel)** 或 **.csv** 檔案！系統將自動識別欄位。")
+st.title("📊 股市戰略指揮中心 (V13.2 智能防呆除錯版)")
+st.markdown("💡 **全自動化達成：** 完美修復檔案重讀卡頓問題，並加入數字逗號過濾與最新年度自動校準功能！")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -82,7 +82,7 @@ uploaded_file = st.sidebar.file_uploader("上傳 Goodinfo 財報總表 (支援 E
 st.sidebar.divider()
 st.sidebar.header("⚙️ 系統參數設定")
 simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
-use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取即時股價 (若打勾需等1~2分鐘；不打勾則用 Excel 內建股價，瞬間完成)", value=False)
+use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取即時股價 (打勾需等2分鐘；不打勾用Excel股價瞬間完成)", value=False)
 
 # ==========================================
 # 3. 資料解析與執行區塊
@@ -91,8 +91,10 @@ stock_db = {}
 
 if uploaded_file is not None:
     try:
-        # 💡 自動判斷副檔名，決定使用 Excel 引擎或 CSV 引擎
+        # 💡 關鍵修復 1：每次讀取前將檔案指標歸零，避免 Streamlit 點擊按鈕後讀不到檔案
+        uploaded_file.seek(0)
         file_name = uploaded_file.name.lower()
+        
         if file_name.endswith('.xlsx'):
             df_upload = pd.read_excel(uploaded_file)
         else:
@@ -103,13 +105,13 @@ if uploaded_file is not None:
                 
         cols = df_upload.columns.tolist()
         
-        # 💡 強大的模糊比對函數 (Regex)
+        # 💡 關鍵修復 2：由後往前找 (reversed)，確保抓到最新年度 (如優先抓 25Q1 而非 24Q1)
         def find_col(pattern):
-            for c in cols:
+            for c in reversed(cols):
                 if re.search(pattern, c): return c
             return None
             
-        # 尋找對應欄位 (完全不用管是哪一年度)
+        # 尋找對應欄位
         c_code = find_col(r'代號')
         c_name = find_col(r'名稱')
         c_price = find_col(r'成交')
@@ -134,9 +136,12 @@ if uploaded_file is not None:
             code = str(row[c_code]).split('.')[0] if c_code and pd.notna(row[c_code]) else ""
             if not code.isdigit(): continue # 略過空行
             
+            # 💡 關鍵修復 3：去除數字中的千分位逗號 (如 1,995.00)
             def get_val(col_name, default=0.0):
                 if col_name and pd.notna(row[col_name]):
-                    try: return float(row[col_name])
+                    try: 
+                        val_str = str(row[col_name]).replace(',', '').strip()
+                        return float(val_str)
                     except: return default
                 return default
             
@@ -160,7 +165,7 @@ if uploaded_file is not None:
             }
         st.success(f"✅ 成功解析檔案！共載入 {len(stock_db)} 檔股票資料。請點擊下方按鈕執行分析。")
     except Exception as e:
-        st.error(f"檔案解析失敗，請確認上傳的是否為正確的 Excel 或 CSV。錯誤代碼：{e}")
+        st.error(f"檔案解析失敗，錯誤代碼：{e}")
 
 if not stock_db:
     st.info("請從左側上傳您的 Excel 或 CSV 檔案以開始分析百檔股票。")
@@ -192,15 +197,15 @@ if stock_db and st.button(f"🚀 執行 {simulated_month} 月份戰略分析", t
             )
             results.append(res)
             
-        st.session_state["df_v13"] = pd.DataFrame(results)
+        st.session_state["df_v13_2"] = pd.DataFrame(results)
         progress_bar.empty()
         st.success(f"✅ 分析完成！共處理 {len(stock_db)} 檔個股。")
 
 # ==========================================
 # 4. 圖表與報表呈現
 # ==========================================
-if "df_v13" in st.session_state:
-    df = st.session_state["df_v13"]
+if "df_v13_2" in st.session_state:
+    df = st.session_state["df_v13_2"]
     
     st.divider()
     st.subheader("📈 個股營收軌跡對比 (去年度實際 vs 今年度預估)")
