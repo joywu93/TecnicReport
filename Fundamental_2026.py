@@ -13,15 +13,10 @@ st.set_page_config(page_title="2026 戰略指揮", layout="wide", initial_sideba
 
 st.markdown("""
     <style>
-    /* 縮小標題與字體 */
     h1 { font-size: 1.8rem !important; margin-bottom: 0px !important; }
     h2 { font-size: 1.4rem !important; margin-bottom: 0px !important; }
     p { margin-bottom: 0.2rem !important; font-size: 0.95rem !important; }
-    
-    /* 縮減上方留白 */
     .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
-    
-    /* 卷軸加粗與自定義 */
     ::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
     ::-webkit-scrollbar-track { background: #e0e0e0; border-radius: 6px; }
     ::-webkit-scrollbar-thumb { background: #888; border-radius: 6px; border: 2px solid #e0e0e0; }
@@ -30,12 +25,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V28 修復版)")
+st.title("📊 2026 戰略指揮 (V29 戰情追蹤版)")
 
 # ==========================================
-# 1. 核心大腦：完美復刻 VBA (雙年均值法)
+# 1. 核心大腦：完美復刻 VBA 
 # ==========================================
-def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price):
+def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq):
     if current_month == 1:
         est_q1_avg, formula_note, known_q1 = (rev_last_11 + rev_last_12) / 2, "採上年11、12月均值", 0
     elif current_month == 2:
@@ -78,6 +73,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps, 2), 
         "預估今年度_EPS": round(est_full_year_eps, 2), "本益比(PER)": round(est_per, 2),         
         "預估年成長率(%)": round(est_annual_yoy, 2), "運算配息率(%)": calc_payout_ratio,
+        "最新季度流動合約負債(億)": contract_liab, "最新季度流動合約負債季增(%)": contract_liab_qoq, # 💡 新增的兩欄合約負債
         "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev], "_known_qs": [known_q1, 0, 0, 0],
         "_pure_est_qs": [max(0, est_q1_rev_total - known_q1), est_q2_rev_total, est_q3_rev_total, est_q4_rev_total]
     }
@@ -141,6 +137,11 @@ try:
         c_eps_q3, c_eps_q4 = get_col(f"{ly}Q3", "盈餘"), get_col(f"{ly}Q4", "盈餘")
         c_y1_q1, c_y1_q2, c_y1_q3, c_y1_q4 = get_col(f"{y1}Q1", "營收"), get_col(f"{y1}Q2", "營收"), get_col(f"{y1}Q3", "營收"), get_col(f"{y1}Q4", "營收")
         c_rev_10, c_non_op, c_payout = get_col("10單月營收"), get_col("業外損益"), get_col("分配率")
+        
+        # 💡 自動抓取合約負債相關欄位
+        c_liab = get_col("合約負債")
+        c_liab_qoq = get_col("合約負債季增")
+        if not c_liab_qoq: c_liab_qoq = get_col("季增", "負債")
 
         stock_db = {}
         for idx, row in df_upload.iterrows():
@@ -169,21 +170,22 @@ try:
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
                 "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
-                "payout": get_val(c_payout), "price": get_val(c_price)
+                "payout": get_val(c_payout), "price": get_val(c_price),
+                "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq) # 存入資料庫
             }
         
-        st.session_state["stock_db_v28"] = stock_db
+        st.session_state["stock_db_v29"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v28" in st.session_state:
+if "stock_db_v29" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v28"].items():
+            for code, data in st.session_state["stock_db_v29"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: price = yf.Ticker(f"{code}.TW").history(period="1d")['Close'].iloc[-1]
@@ -195,24 +197,25 @@ if "stock_db_v28" in st.session_state:
                     base_q_eps=data["base_q_eps"], non_op_ratio=data["non_op"], base_q_avg_rev=data["base_q_avg_rev"],
                     ly_q1_rev=data["ly_q1_rev"], ly_q2_rev=data["ly_q2_rev"], ly_q3_rev=data["ly_q3_rev"], ly_q4_rev=data["ly_q4_rev"],
                     y1_q1_rev=data["y1_q1_rev"], y1_q2_rev=data["y1_q2_rev"], y1_q3_rev=data["y1_q3_rev"], y1_q4_rev=data["y1_q4_rev"],
-                    recent_payout_ratio=data["payout"], current_price=price
+                    recent_payout_ratio=data["payout"], current_price=price, 
+                    contract_liab=data.get("contract_liab", 0), contract_liab_qoq=data.get("contract_liab_qoq", 0)
                 )
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v28"] = pd.DataFrame(results)
+            st.session_state["df_final_v29"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v28" in st.session_state:
-    df = st.session_state["df_final_v28"].copy()
+if "df_final_v29" in st.session_state:
+    df = st.session_state["df_final_v29"].copy()
     
-    # 👉 這裡修復了您的 SyntaxError：完整保留 col1, col2 = st.columns([1, 2])
     col1, col2 = st.columns([1, 2])
     with col1:
         st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採H2/H1比例)", unsafe_allow_html=True)
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
         stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
-        st.markdown(f"EPS **{stock_row['預估今年度_EPS']}元** ｜ 殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ 成長 **{stock_row['預估年成長率(%)']}%**")
+        # 💡 更新核心指標文字排版
+        st.markdown(f"**股價 {stock_row['最新股價']}元** ｜ EPS **{stock_row['預估今年度_EPS']}元** ｜ 殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ 成長率 **{stock_row['預估年成長率(%)']}%**")
 
     with col2:
         chart_data = pd.DataFrame({
@@ -232,17 +235,37 @@ if "df_final_v28" in st.session_state:
     display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     
+    # 💡 目標鎖定功能：將使用者在上方選擇的股票標記為 1，並強制排序到第一位
+    display_df['is_searched'] = display_df['股票名稱'].apply(lambda x: 1 if x == selected_stock else 0)
+    
     if watch_list:
         display_df['is_vip'] = display_df['股票名稱'].apply(lambda x: 1 if any(w in x for w in watch_list) else 0)
-        display_df = display_df.sort_values(by=['is_vip', '季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False, False]).drop(columns=['is_vip'])
+        # 排序權重：1.是否被搜尋 -> 2.是否為VIP -> 3.成長率 -> 4.殖利率
+        display_df = display_df.sort_values(by=['is_searched', 'is_vip', '季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False, False, False]).drop(columns=['is_vip'])
     else:
-        display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
+        display_df = display_df.sort_values(by=['is_searched', '季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False, False])
+        
+    display_df = display_df.drop(columns=['is_searched'])
     
-    display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)"]]
+    # 加入合約負債欄位
+    display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     display_df = display_df.set_index(["股票名稱", "最新股價"])
     
-    def highlight_yield(val):
-        return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 4.0 else ''
+    # 💡 視覺強化：將搜尋的股票整列畫上重點底色，同時保留殖利率的紅色字體
+    def highlight_row_and_yield(row):
+        styles = [''] * len(row)
+        # 如果是目標鎖定的股票，整列上淡淡的黃底色
+        if row.name[0] == selected_stock:
+            styles = ['background-color: rgba(255, 235, 59, 0.2)'] * len(row)
+            
+        # 針對殖利率大於 4% 的欄位標註紅字粗體
+        yield_idx = row.index.get_loc('前瞻殖利率(%)')
+        val = row.iloc[yield_idx]
+        if isinstance(val, (int, float)) and val >= 4.0:
+            styles[yield_idx] += '; color: #ff4b4b; font-weight: bold'
+            
+        return styles
     
-    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%"}
-    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=500, use_container_width=True)
+    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
+    
+    st.dataframe(display_df.style.apply(highlight_row_and_yield, axis=1).format(format_dict), height=500, use_container_width=True)
