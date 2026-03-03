@@ -30,7 +30,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V28 雲端讀取版)")
+st.title("📊 2026 戰略指揮 (V28 修復版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA (雙年均值法)
@@ -93,7 +93,6 @@ watch_list_input = st.sidebar.text_input("📌 VIP 關注清單", value="8358; 8
 st.sidebar.divider()
 st.sidebar.header("📥 資料庫 (手動/自動)")
 
-# 💡 記憶與自動搜尋：加入您的新檔名 MonthlyDataCSV.csv
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
     if os.path.exists(f):
@@ -102,7 +101,7 @@ for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
 
 if default_file_path:
     st.sidebar.success(f"🤖 雲端雷達已鎖定：{default_file_path}")
-    uploaded_file = None # 已經有檔案了，隱藏上傳框框
+    uploaded_file = None
 else:
     uploaded_file = st.sidebar.file_uploader("無暫存檔，請手動上傳 (CSV/Excel)", type=["csv", "xlsx"])
 
@@ -207,4 +206,43 @@ if "stock_db_v28" in st.session_state:
 if "df_final_v28" in st.session_state:
     df = st.session_state["df_final_v28"].copy()
     
-    col1, col2 =
+    # 👉 這裡修復了您的 SyntaxError：完整保留 col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採H2/H1比例)", unsafe_allow_html=True)
+        selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
+        stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
+        st.markdown(f"EPS **{stock_row['預估今年度_EPS']}元** ｜ 殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ 成長 **{stock_row['預估年成長率(%)']}%**")
+
+    with col2:
+        chart_data = pd.DataFrame({
+            "季度": ["Q1", "Q2", "Q3", "Q4"], "1.去年實際": stock_row["_ly_qs"],
+            "2.今年已公布": stock_row["_known_qs"], "3.今年純預估": stock_row["_pure_est_qs"]
+        }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
+        
+        bars = alt.Chart(chart_data).mark_bar().encode(
+            x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
+            y=alt.Y('營收(億):Q', title=None), color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top")),
+            column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
+        ).properties(width=80, height=150)
+        st.altair_chart(bars)
+    
+    st.divider()
+    
+    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
+    watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
+    
+    if watch_list:
+        display_df['is_vip'] = display_df['股票名稱'].apply(lambda x: 1 if any(w in x for w in watch_list) else 0)
+        display_df = display_df.sort_values(by=['is_vip', '季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False, False]).drop(columns=['is_vip'])
+    else:
+        display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
+    
+    display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)"]]
+    display_df = display_df.set_index(["股票名稱", "最新股價"])
+    
+    def highlight_yield(val):
+        return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 4.0 else ''
+    
+    format_dict = {"當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%"}
+    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=500, use_container_width=True)
