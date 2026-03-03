@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime
 import yfinance as yf
 
 # ==========================================
 # 網頁基本設定
 # ==========================================
 st.set_page_config(page_title="2026 股市戰略指揮中心", layout="wide")
-st.title("📊 股市戰略指揮中心 (V15 終極量身打造版)")
-st.markdown("💡 **專屬解碼器已啟動：** 針對 Goodinfo 匯出格式進行深度解析，解決卡頓當機問題！")
+st.title("📊 股市戰略指揮中心 (V16 年份精準鎖定版)")
+st.markdown("💡 **重大突破：** 已解決「抓錯去年湊數」問題！系統會自動鎖定最新年份，若 Q4 財報未出，將自動加總 10~12 月營收並利用 Q3 盈餘推算。")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -76,27 +75,36 @@ uploaded_file = st.sidebar.file_uploader("上傳財報 CSV 或 Excel", type=["xl
 st.sidebar.divider()
 st.sidebar.header("⚙️ 系統參數設定")
 simulated_month = st.sidebar.slider("目前月份", 1, 12, 2)
-use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓取即時股價 (不勾選則用表單股價瞬間完成)", value=False)
+use_yahoo_price = st.sidebar.checkbox("🌐 連線 Yahoo 抓即時股價 (不勾選則用表單股價瞬間完成)", value=False)
 
 # ==========================================
-# 3. 專屬資料解析引擎 (一上傳立刻預覽)
+# 3. 專屬資料解析引擎 (年份精準鎖定)
 # ==========================================
 if uploaded_file is not None:
     try:
-        # 強制讀取：針對 Goodinfo 格式最佳化
         uploaded_file.seek(0)
         file_name = uploaded_file.name.lower()
         
-        if file_name.endswith('.xlsx'):
+        # 解決 CSV 台灣編碼問題
+        if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
             df_upload = pd.read_excel(uploaded_file)
         else:
-            try: df_upload = pd.read_csv(uploaded_file, encoding='cp950') # 台灣最常見編碼
+            try: df_upload = pd.read_csv(uploaded_file, encoding='cp950')
             except: 
                 uploaded_file.seek(0)
                 df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
                 
         cols = df_upload.columns.tolist()
         
+        # 💡 重大更新：自動判讀年份，鎖定最新年度！
+        q_cols = [c for c in cols if re.search(r'(\d{2})Q', c)]
+        if q_cols:
+            years = [re.search(r'(\d{2})Q', c).group(1) for c in q_cols]
+            ly = max(years) # 找出去年 (例如 '25')
+        else:
+            ly = "25"
+        ty = str(int(ly) + 1) # 推算今年 (例如 '26')
+
         def find_col(pattern):
             for c in reversed(cols):
                 if re.search(pattern, c): return c
@@ -104,28 +112,26 @@ if uploaded_file is not None:
             
         c_code = find_col(r'代號')
         c_name = find_col(r'名稱')
+        c_price = find_col(r'成交')
         
         if not c_code:
-            st.error("❌ 找不到「代號」欄位！請確認這是否為 Goodinfo 的匯出表。")
+            st.error("❌ 找不到「代號」欄位！請確認檔案。")
             st.stop()
 
-        c_price = find_col(r'成交')
-        c_rev_10, c_rev_11, c_rev_12 = find_col(r'M10單月營收'), find_col(r'M11單月營收'), find_col(r'M12單月營收')
-        c_rev_1, c_rev_2, c_rev_3 = find_col(r'M01單月營收'), find_col(r'M02單月營收'), find_col(r'M03單月營收')
-        c_non_op, c_payout = find_col(r'業外損益'), find_col(r'分配率')
-
-        # 💡 終極防呆：自動偵測「最新年份」，避免跨年度抓錯
-        q3_eps_col = find_col(r'Q3.*每股盈餘')
-        year_prefix = q3_eps_col[:2] if q3_eps_col else "25" # 預設25年
+        # 精準鎖定年份抓取
+        c_ly_q1, c_ly_q2 = find_col(rf'{ly}Q1.*營收'), find_col(rf'{ly}Q2.*營收')
+        c_ly_q3, c_ly_q4 = find_col(rf'{ly}Q3.*營收'), find_col(rf'{ly}Q4.*營收')
+        c_eps_q3, c_eps_q4 = find_col(rf'{ly}Q3.*盈餘'), find_col(rf'{ly}Q4.*盈餘')
         
-        c_eps_q4, c_eps_q3 = find_col(rf'{year_prefix}Q4.*每股盈餘'), find_col(rf'{year_prefix}Q3.*每股盈餘')
-        c_ly_q1, c_ly_q2 = find_col(rf'{year_prefix}Q1.*營收'), find_col(rf'{year_prefix}Q2.*營收')
-        c_ly_q3, c_ly_q4 = find_col(rf'{year_prefix}Q3.*營收'), find_col(rf'{year_prefix}Q4.*營收')
+        c_rev_10, c_rev_11, c_rev_12 = find_col(rf'{ly}M10.*營收'), find_col(rf'{ly}M11.*營收'), find_col(rf'{ly}M12.*營收')
+        c_rev_1, c_rev_2, c_rev_3 = find_col(rf'{ty}M0?1.*營收'), find_col(rf'{ty}M0?2.*營收'), find_col(rf'{ty}M0?3.*營收')
+        
+        c_non_op, c_payout = find_col(r'業外損益'), find_col(r'分配率')
 
         stock_db = {}
         for idx, row in df_upload.iterrows():
             code = str(row[c_code]).split('.')[0].strip() if pd.notna(row[c_code]) else ""
-            if len(code) < 3: continue # 濾除無效空行
+            if len(code) < 3: continue 
             
             def get_val(col_name, default=0.0):
                 if col_name and pd.notna(row[col_name]):
@@ -136,47 +142,52 @@ if uploaded_file is not None:
                     except: return default
                 return default
             
-            eps_q4, eps_q3 = get_val(c_eps_q4), get_val(c_eps_q3)
-            rev_q4, rev_q3 = get_val(c_ly_q4), get_val(c_ly_q3)
+            rev_q1, rev_q2 = get_val(c_ly_q1), get_val(c_ly_q2)
+            rev_q3, rev_q4 = get_val(c_ly_q3), get_val(c_ly_q4)
+            eps_q3, eps_q4 = get_val(c_eps_q3), get_val(c_eps_q4)
             
-            # 若 Q4 營收未出，自動加總 10, 11, 12 月營收
-            if rev_q4 == 0: rev_q4 = get_val(c_rev_10) + get_val(c_rev_11) + get_val(c_rev_12)
+            # 💡 VBA神救援：若 Q4 營收未出，自動加總 10+11+12 月
+            if rev_q4 == 0: 
+                rev_q4 = get_val(c_rev_10) + get_val(c_rev_11) + get_val(c_rev_12)
             
-            if eps_q4 != 0 and rev_q4 != 0: base_eps, base_rev_avg = eps_q4, rev_q4 / 3
-            else: base_eps, base_rev_avg = eps_q3, (rev_q3 / 3 if rev_q3 != 0 else 0)
+            # 💡 決定基準 EPS：若 Q4 盈餘未出，完美套用您的 VBA 推算法
+            if eps_q4 != 0: 
+                base_eps = eps_q4
+            else:
+                base_eps = eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3
+
+            base_rev_avg = rev_q4 / 3 if rev_q4 > 0 else 0
 
             stock_db[code] = {
                 "name": str(row[c_name]) if c_name else "未知",
                 "rev_last_11": get_val(c_rev_11), "rev_last_12": get_val(c_rev_12),
                 "rev_this_1": get_val(c_rev_1), "rev_this_2": get_val(c_rev_2), "rev_this_3": get_val(c_rev_3),
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": base_rev_avg,
-                "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2),
-                "ly_q3_rev": get_val(c_ly_q3), "ly_q4_rev": rev_q4,
+                "ly_q1_rev": rev_q1, "ly_q2_rev": rev_q2, "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
                 "payout": get_val(c_payout), "price": get_val(c_price)
             }
         
-        # 將資料鎖入系統記憶，防止按鈕失憶
-        st.session_state["stock_db_v15"] = stock_db
+        st.session_state["stock_db_v16"] = stock_db
         
-        # 💡 資料透視鏡：一上傳立刻顯示前 3 筆，讓您安心！
-        st.success(f"✅ 檔案讀取成功！成功過濾並抓取 {len(stock_db)} 檔股票。 (以下為前 3 筆資料預覽)")
-        preview_data = [{"股票代號": k, "名稱": v['name'], "基礎EPS": v['base_q_eps'], "基準均營收": round(v['base_q_avg_rev'], 2)} for i, (k, v) in enumerate(stock_db.items()) if i < 3]
+        # 💡 資料透視鏡：讓您確認檔案真的讀進來了！
+        st.success(f"✅ 檔案讀取成功！已自動鎖定 {ly} 年度資料，共抓取 {len(stock_db)} 檔股票。(前 3 筆預覽如下)")
+        preview_data = [{"股票代號": k, "名稱": v['name'], "推算基準EPS": round(v['base_q_eps'],2), "基準均營收": round(v['base_q_avg_rev'], 2)} for i, (k, v) in enumerate(stock_db.items()) if i < 3]
         st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
 
     except Exception as e:
-        st.error(f"檔案解析發生錯誤，請截圖此錯誤代碼：{e}")
+        st.error(f"檔案解析發生錯誤，錯誤代碼：{e}")
 
-if "stock_db_v15" not in st.session_state:
+if "stock_db_v16" not in st.session_state:
     st.info("請從左側上傳您的 CSV/Excel 檔案。")
 
 # ==========================================
 # 4. 執行運算區塊
 # ==========================================
-if "stock_db_v15" in st.session_state:
+if "stock_db_v16" in st.session_state:
     if st.button(f"🚀 開始執行 {simulated_month} 月份戰略分析", type="primary"):
         with st.spinner("正在執行 VBA 核心運算，請稍候..."):
             results = []
-            db = st.session_state["stock_db_v15"]
+            db = st.session_state["stock_db_v16"]
             progress_bar = st.progress(0)
             
             for i, (code, data) in enumerate(db.items()):
@@ -198,15 +209,15 @@ if "stock_db_v15" in st.session_state:
                 )
                 results.append(res)
                 
-            st.session_state["df_final_v15"] = pd.DataFrame(results)
+            st.session_state["df_final_v16"] = pd.DataFrame(results)
             progress_bar.empty()
             st.success("✅ 分析完成！請滾動至下方查看總表。")
 
 # ==========================================
 # 5. 圖表與報表呈現
 # ==========================================
-if "df_final_v15" in st.session_state:
-    df = st.session_state["df_final_v15"]
+if "df_final_v16" in st.session_state:
+    df = st.session_state["df_final_v16"]
     
     st.divider()
     st.subheader("📈 個股營收軌跡對比 (去年度實際 vs 今年度預估)")
