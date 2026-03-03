@@ -16,7 +16,6 @@ st.markdown("""
     h1 { font-size: 1.8rem !important; margin-bottom: 0px !important; }
     h2 { font-size: 1.4rem !important; margin-bottom: 0px !important; }
     p { margin-bottom: 0.2rem !important; font-size: 0.95rem !important; }
-    /* 💡 修正表頭被遮擋：把 padding-top 加大到 2.5rem */
     .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; }
     ::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
     ::-webkit-scrollbar-track { background: #e0e0e0; border-radius: 6px; }
@@ -26,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V30 完美響應版)")
+st.title("📊 2026 戰略指揮 (V31 圖表瘦身版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -67,7 +66,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio == 0 else recent_payout_ratio)
     
-    # 💡 修正利奇問題：若預估全年度 EPS 為負數或 0，殖利率強制歸零
     if est_full_year_eps > 0 and current_price > 0:
         forward_yield = (est_full_year_eps * (calc_payout_ratio / 100)) / current_price * 100 
     else:
@@ -179,18 +177,18 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
         
-        st.session_state["stock_db_v30"] = stock_db
+        st.session_state["stock_db_v31"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v30" in st.session_state:
+if "stock_db_v31" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v30"].items():
+            for code, data in st.session_state["stock_db_v31"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: price = yf.Ticker(f"{code}.TW").history(period="1d")['Close'].iloc[-1]
@@ -208,13 +206,12 @@ if "stock_db_v30" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v30"] = pd.DataFrame(results)
+            st.session_state["df_final_v31"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v30" in st.session_state:
-    df = st.session_state["df_final_v30"].copy()
+if "df_final_v31" in st.session_state:
+    df = st.session_state["df_final_v31"].copy()
     
-    # 💡 VIP 清單解析強化：明確抓出所有代號，並加上 ⭐ 標記
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
@@ -235,17 +232,17 @@ if "df_final_v30" in st.session_state:
             "2.今年已公布": stock_row["_known_qs"], "3.今年純預估": stock_row["_pure_est_qs"]
         }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
         
-        # 💡 手機版響應式圖表：移除死板的 width 參數，加入 use_container_width=True
+        # 💡 圖表瘦身還原：給予每一季一個固定且俐落的寬度 (width=55)，關閉自動填滿
         bars = alt.Chart(chart_data).mark_bar().encode(
             x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top")),
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
-        ).properties(height=200)
-        st.altair_chart(bars, use_container_width=True)
+        ).properties(width=55, height=220)
+        
+        st.altair_chart(bars, use_container_width=False) 
     
     st.divider()
     
-    # 💡 破解點擊欄位排序失控：新增「🎯 鎖定股專屬顯示區」
     st.markdown(f"### 🎯 【{selected_stock}】 數據特寫 (免受下方大表排序影響)")
     mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式", "is_vip"])
     mini_df = mini_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
