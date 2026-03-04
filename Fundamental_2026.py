@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V40 免死金牌通關版)")
+st.title("📊 2026 戰略指揮 (V41 智慧日期防呆版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -101,7 +101,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V40 新增：雲端保險箱全自動更新機制 (繞過政府 SSL 憑證檢查版)
+# 🌟 V41 新增：智慧攔截與防呆全自動機制
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -118,10 +118,8 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
                 raw_key = st.secrets["google_key"]
-                if isinstance(raw_key, str):
-                    key_dict = json.loads(raw_key)
-                else:
-                    key_dict = dict(raw_key)
+                if isinstance(raw_key, str): key_dict = json.loads(raw_key)
+                else: key_dict = dict(raw_key)
                     
                 creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                 client = gspread.authorize(creds)
@@ -153,7 +151,6 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     url_sii = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
                     url_otc = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
                     
-                    # 💡 V40 關鍵升級：加入 verify=False 直接繞過政府網站的 SSL 憑證檢查
                     res_sii = requests.get(url_sii, verify=False)
                     res_otc = requests.get(url_otc, verify=False)
                     
@@ -161,24 +158,37 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     if res_sii.status_code == 200: df_all = pd.concat([df_all, pd.DataFrame(res_sii.json())], ignore_index=True)
                     if res_otc.status_code == 200: df_all = pd.concat([df_all, pd.DataFrame(res_otc.json())], ignore_index=True)
 
-                    st.write("4. 核對您的 VIP 名單並轉換成「億元」...")
-                    cells_to_update = []
-                    for index, row in df_all.iterrows():
-                        code = str(row.get('公司代號', '')).strip()
-                        if code in row_map:
-                            row_idx = row_map[code]
-                            try:
-                                revenue_100m = round(float(row['營業收入-當月營收']) / 100000, 2)
-                                cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=revenue_100m))
-                            except: pass
-                    
-                    if cells_to_update:
-                        st.write("5. 發射！瞬間寫入 Google 試算表...")
-                        sheet.update_cells(cells_to_update)
-                        status.update(label=f"🎉 任務大成功！已更新 {len(cells_to_update)} 筆資料！", state="complete", expanded=False)
-                        st.balloons()
+                    if df_all.empty:
+                        status.update(label="❌ 政府網站無資料回傳", state="error", expanded=True)
                     else:
-                        status.update(label="⚠️ 沒有找到相符的資料需更新", state="error", expanded=True)
+                        # 💡 V41 核心防護：檢查政府給的到底是幾月的資料！
+                        gov_ym = str(df_all['資料年月'].iloc[0]).strip() # 例如取得 "11501"
+                        gov_month = gov_ym[-2:] # 取得最後兩個數字 "01"
+                        target_m = auto_month.zfill(2) # 確保輸入的是兩碼，如 "02"
+                        
+                        if target_m != gov_month:
+                            st.error(f"⛔ 【攔截成功】保護機制啟動！您想更新 {target_m} 月，但政府目前最新總表只到 {gov_month} 月！")
+                            st.info("💡 說明：政府的全市場總表會在【每月 11 日】統一更新。若想獲取 2 月營收，請於 3 月 11 日再按此按鈕執行即可！")
+                            status.update(label="任務提早結束：政府尚未放榜", state="error", expanded=True)
+                        else:
+                            st.write("4. 核對您的 VIP 名單並轉換成「億元」...")
+                            cells_to_update = []
+                            for index, row in df_all.iterrows():
+                                code = str(row.get('公司代號', '')).strip()
+                                if code in row_map:
+                                    row_idx = row_map[code]
+                                    try:
+                                        revenue_100m = round(float(row['營業收入-當月營收']) / 100000, 2)
+                                        cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=revenue_100m))
+                                    except: pass
+                            
+                            if cells_to_update:
+                                st.write("5. 發射！瞬間寫入 Google 試算表...")
+                                sheet.update_cells(cells_to_update)
+                                status.update(label=f"🎉 任務大成功！已更新 {len(cells_to_update)} 筆資料！", state="complete", expanded=False)
+                                st.balloons()
+                            else:
+                                status.update(label="⚠️ 沒有找到相符的資料需更新", state="error", expanded=True)
                         
             except Exception as e:
                 status.update(label="任務中斷 (請看下方紅字說明)", state="error", expanded=True)
@@ -257,18 +267,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v40"] = stock_db
+        st.session_state["stock_db_v41"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v40" in st.session_state:
+if "stock_db_v41" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v40"].items():
+            for code, data in st.session_state["stock_db_v41"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: 
@@ -295,11 +305,11 @@ if "stock_db_v40" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v40"] = pd.DataFrame(results)
+            st.session_state["df_final_v41"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v40" in st.session_state:
-    df = st.session_state["df_final_v40"].copy()
+if "df_final_v41" in st.session_state:
+    df = st.session_state["df_final_v41"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
