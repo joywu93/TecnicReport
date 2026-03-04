@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V32 欄位精準版)")
+st.title("📊 2026 戰略指揮 (V33 盤中即時版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -87,7 +87,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 # ==========================================
 st.sidebar.header("⚙️ 系統參數")
 simulated_month = st.sidebar.slider("月份推演", 1, 12, 2)
-use_yahoo = st.sidebar.checkbox("🌐 啟用 Yahoo 最新股價", value=False)
+use_yahoo = st.sidebar.checkbox("🌐 啟用 Yahoo 最新股價 (即時連線)", value=False)
 watch_list_input = st.sidebar.text_input("📌 VIP 關注清單", value="8358, 8383, 8390")
 
 st.sidebar.divider()
@@ -142,13 +142,11 @@ try:
         c_y1_q1, c_y1_q2, c_y1_q3, c_y1_q4 = get_col(f"{y1}Q1", "營收"), get_col(f"{y1}Q2", "營收"), get_col(f"{y1}Q3", "營收"), get_col(f"{y1}Q4", "營收")
         c_rev_10, c_non_op, c_payout = get_col("10單月營收"), get_col("業外損益"), get_col("分配率")
         
-        # 💡 V32 修正：強制切開「絕對值」與「季增率」的抓取條件
         c_liab_qoq = get_col("合約負債季增")
         if not c_liab_qoq: c_liab_qoq = get_col("季增", "負債")
         
         c_liab = None
         for c in reversed(cols):
-            # 必須包含合約負債，但絕對不能包含「季增」或「%」
             if "合約負債" in c and "季增" not in c and "%" not in c:
                 c_liab = c
                 break
@@ -184,21 +182,25 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
         
-        st.session_state["stock_db_v32"] = stock_db
+        st.session_state["stock_db_v33"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v32" in st.session_state:
+if "stock_db_v33" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
-        with st.spinner("運算中..."):
+        with st.spinner("雲端運算中，若開啟 Yahoo 報價會稍微耗時，請稍候..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v32"].items():
+            for code, data in st.session_state["stock_db_v33"].items():
                 price = data["price"]
+                # 💡 V33 修正：強迫抓取「盤中 1 分鐘級別」的線圖，取最後一筆保證最新價
                 if use_yahoo:
-                    try: price = yf.Ticker(f"{code}.TW").history(period="1d")['Close'].iloc[-1]
+                    try: 
+                        hist = yf.Ticker(f"{code}.TW").history(period="1d", interval="1m")
+                        if not hist.empty:
+                            price = hist['Close'].dropna().iloc[-1]
                     except: pass
                 
                 res = auto_strategic_model(
@@ -213,11 +215,11 @@ if "stock_db_v32" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v32"] = pd.DataFrame(results)
+            st.session_state["df_final_v33"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v32" in st.session_state:
-    df = st.session_state["df_final_v32"].copy()
+if "df_final_v33" in st.session_state:
+    df = st.session_state["df_final_v33"].copy()
     
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
