@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V35 雲端資料庫升級版)")
+st.title("📊 2026 戰略指揮 (V36 報價修復版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -194,25 +194,39 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
         
-        st.session_state["stock_db_v35"] = stock_db
+        st.session_state["stock_db_v36"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v35" in st.session_state:
+if "stock_db_v36" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v35"].items():
+            for code, data in st.session_state["stock_db_v36"].items():
                 price = data["price"]
+                
+                # 💡 V36 升級：自動判斷上市 (.TW) 與上櫃 (.TWO) 報價
                 if use_yahoo:
                     try: 
+                        # 先試上市
                         hist = yf.Ticker(f"{code}.TW").history(period="1d", interval="1m")
                         if not hist.empty:
                             price = hist['Close'].dropna().iloc[-1]
-                    except: pass
+                        else:
+                            # 找不到就試上櫃
+                            hist_otc = yf.Ticker(f"{code}.TWO").history(period="1d", interval="1m")
+                            if not hist_otc.empty:
+                                price = hist_otc['Close'].dropna().iloc[-1]
+                    except: 
+                        try:
+                            # 發生錯誤也試一次上櫃
+                            hist_otc = yf.Ticker(f"{code}.TWO").history(period="1d", interval="1m")
+                            if not hist_otc.empty:
+                                price = hist_otc['Close'].dropna().iloc[-1]
+                        except: pass
                 
                 res = auto_strategic_model(
                     name=f"{code} {data['name']}", current_month=simulated_month,
@@ -226,11 +240,11 @@ if "stock_db_v35" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v35"] = pd.DataFrame(results)
+            st.session_state["df_final_v36"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v35" in st.session_state:
-    df = st.session_state["df_final_v35"].copy()
+if "df_final_v36" in st.session_state:
+    df = st.session_state["df_final_v36"].copy()
     
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
@@ -245,7 +259,6 @@ if "df_final_v35" in st.session_state:
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
         stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
         
-        # 💡 V35 升級：加入合約負債與季增率顯示
         liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
         liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
         
