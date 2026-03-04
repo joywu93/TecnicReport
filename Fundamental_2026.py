@@ -29,7 +29,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V38 雲端全自動版)")
+st.title("📊 2026 戰略指揮 (V39 雲端全自動強化版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -97,7 +97,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V38 新增：雲端保險箱全自動更新機制
+# 🌟 V39 新增：雲端保險箱全自動更新機制 (防呆升級版)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -105,7 +105,7 @@ auto_month = st.sidebar.text_input("設定欲更新的營收月份 (如: 02)", v
 
 if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary"):
     if not gsheet_url:
-        st.sidebar.error("❌ 請先在上方輸入您的 Google 試算表連結！")
+        st.sidebar.error("❌ 請先在上方『📥 資料庫對接』貼上您的 Google 試算表連結！")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
@@ -113,8 +113,14 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
-                # 💡 直接從保險箱讀取鑰匙，完全不需要實體檔案！
-                key_dict = json.loads(st.secrets["google_key"])
+                
+                # 💡 V39 終極防呆：不管保險箱給的是字串還是字典，通通吃下去！
+                raw_key = st.secrets["google_key"]
+                if isinstance(raw_key, str):
+                    key_dict = json.loads(raw_key)
+                else:
+                    key_dict = dict(raw_key)
+                    
                 creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                 client = gspread.authorize(creds)
                 
@@ -132,7 +138,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                         
                 if target_col_idx == -1 or code_col_idx == -1:
                     st.error(f"❌ 找不到包含「代號」或「{auto_month}單月營收」的標題欄位！")
-                    status.update(label="任務失敗", state="error", expanded=False)
+                    status.update(label="任務失敗", state="error", expanded=True)
                 else:
                     row_map = {}
                     for i, row in enumerate(all_data):
@@ -168,10 +174,12 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                         status.update(label=f"🎉 任務大成功！已更新 {len(cells_to_update)} 筆資料！", state="complete", expanded=False)
                         st.balloons()
                     else:
-                        status.update(label="⚠️ 沒有找到相符的資料需更新", state="error", expanded=False)
+                        status.update(label="⚠️ 沒有找到相符的資料需更新", state="error", expanded=True)
+                        
             except Exception as e:
-                st.error(f"發生例外錯誤：{e}")
-                status.update(label="任務中斷", state="error", expanded=False)
+                # 💡 V39 新增：發生錯誤時，保證框框會展開，並顯示超大紅字
+                status.update(label="任務中斷 (請看下方紅字說明)", state="error", expanded=True)
+                st.error(f"❌ 詳細錯誤說明：{e}")
 
 # ==========================================
 # 3. 讀取與解析引擎
@@ -246,18 +254,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v38"] = stock_db
+        st.session_state["stock_db_v39"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v38" in st.session_state:
+if "stock_db_v39" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v38"].items():
+            for code, data in st.session_state["stock_db_v39"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: 
@@ -284,11 +292,11 @@ if "stock_db_v38" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v38"] = pd.DataFrame(results)
+            st.session_state["df_final_v39"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v38" in st.session_state:
-    df = st.session_state["df_final_v38"].copy()
+if "df_final_v39" in st.session_state:
+    df = st.session_state["df_final_v39"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
