@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V43 特種爬蟲突圍版)")
+st.title("📊 2026 戰略指揮 (V44 導彈精準定位版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V43 新增：無差別掃蕩爬蟲 (實況轉播版)
+# 🌟 V44 新增：導彈精準定位版爬蟲 (修復欄位跑偏問題)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -132,11 +132,14 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 
                 for i, header in enumerate(headers):
                     h_str = str(header).strip()
-                    if "代號" in h_str: code_col_idx = i + 1
-                    if target_m_header in h_str and "單月營收" in h_str: target_col_idx = i + 1
+                    if "代號" in h_str: 
+                        code_col_idx = i + 1
+                    # 💡 V44 核心修復：嚴格排除「增」字，保證只鎖定「26M02單月營收(億)」
+                    if target_m_header in h_str and "單月營收" in h_str and "增" not in h_str: 
+                        target_col_idx = i + 1
                         
                 if target_col_idx == -1 or code_col_idx == -1:
-                    st.error(f"❌ 在您的試算表中找不到「代號」或包含「{target_m_header}單月營收」的標題！")
+                    st.error(f"❌ 在您的試算表中找不到「代號」或符合「{target_m_header}單月營收(不含增)」的標題！")
                     status.update(label="任務失敗", state="error", expanded=True)
                 else:
                     row_map = {}
@@ -151,7 +154,6 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     
                     st.write(f"3. 破解時間差！直搗 {roc_year} 年 {query_m} 月 HTML 戰區實況：")
                     
-                    # 💡 四大戰區全包，一網打盡
                     url_dict = {
                         "上市(國內)": f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
                         "上市(KY)": f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_1.html",
@@ -172,8 +174,6 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                             for d in dfs:
                                 if isinstance(d.columns, pd.MultiIndex):
                                     d.columns = d.columns.get_level_values(-1)
-                                
-                                # 💡 殺手鐧：暴力消除所有欄位名稱裡的「空白鍵」，破解政府的隱形陷阱
                                 d.columns = [str(c).replace(' ', '').strip() for c in d.columns]
                                 
                                 if '公司代號' in d.columns and '當月營收' in d.columns:
@@ -287,20 +287,20 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v43"] = stock_db
+        st.session_state["stock_db_v44"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v43" in st.session_state:
+if "stock_db_v44" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v43"].items():
+            for code, data in st.session_state["stock_db_v44"].items():
                 
-                # 💡 V43：無縫接軌報價系統 (隱形作業，抓不到自動用舊版)
+                # 💡 V44：無縫接軌報價系統 (隱形作業，抓不到自動用舊版)
                 price = data["price"]
                 try: 
                     hist = yf.Ticker(f"{code}.TW").history(period="1d", interval="1m")
@@ -326,11 +326,11 @@ if "stock_db_v43" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v43"] = pd.DataFrame(results)
+            st.session_state["df_final_v44"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v43" in st.session_state:
-    df = st.session_state["df_final_v43"].copy()
+if "df_final_v44" in st.session_state:
+    df = st.session_state["df_final_v44"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
