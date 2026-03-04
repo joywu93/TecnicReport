@@ -8,6 +8,7 @@ import yfinance as yf
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
+import json
 
 # ==========================================
 # 網頁基本設定 & 響應式 CSS
@@ -28,7 +29,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V37 終極全自動版)")
+st.title("📊 2026 戰略指揮 (V38 雲端全自動版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -96,24 +97,25 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V37 新增：自動化更新按鈕區塊
+# 🌟 V38 新增：雲端保險箱全自動更新機制
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
-st.sidebar.caption("⚠️ 執行前請確認 key.json 已放在本程式同資料夾")
 auto_month = st.sidebar.text_input("設定欲更新的營收月份 (如: 02)", value="02")
 
 if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary"):
     if not gsheet_url:
         st.sidebar.error("❌ 請先在上方輸入您的 Google 試算表連結！")
-    elif not os.path.exists("key.json"):
-        st.sidebar.error("❌ 找不到 key.json 鑰匙！請確認已放在這個資料夾中。")
+    elif "google_key" not in st.secrets:
+        st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("啟動機器人執行任務中...", expanded=True) as status:
+        with st.status("啟動雲端機器人執行任務中...", expanded=True) as status:
             try:
-                st.write("1. 驗證雲端鑰匙...")
+                st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
-                creds = Credentials.from_service_account_file('key.json', scopes=scopes)
+                # 💡 直接從保險箱讀取鑰匙，完全不需要實體檔案！
+                key_dict = json.loads(st.secrets["google_key"])
+                creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                 client = gspread.authorize(creds)
                 
                 st.write("2. 連線至您的 Google 試算表...")
@@ -172,7 +174,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 status.update(label="任務中斷", state="error", expanded=False)
 
 # ==========================================
-# 3. 讀取與解析引擎 (保持不變)
+# 3. 讀取與解析引擎
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -244,18 +246,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v37"] = stock_db
+        st.session_state["stock_db_v38"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v37" in st.session_state:
+if "stock_db_v38" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v37"].items():
+            for code, data in st.session_state["stock_db_v38"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: 
@@ -282,11 +284,11 @@ if "stock_db_v37" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v37"] = pd.DataFrame(results)
+            st.session_state["df_final_v38"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v37" in st.session_state:
-    df = st.session_state["df_final_v37"].copy()
+if "df_final_v38" in st.session_state:
+    df = st.session_state["df_final_v38"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
