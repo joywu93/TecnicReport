@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V34 雲端資料庫版)")
+st.title("📊 2026 戰略指揮 (V35 雲端資料庫升級版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -64,7 +64,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     ly_total_rev = y2_h1 + y2_h2
     est_annual_yoy = ((est_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
     
-    # 💡 確保股價轉換為浮點數，防呆處理
     current_price = float(current_price) if current_price else 0.0
     
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
@@ -76,7 +75,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
         forward_yield = 0
 
     return {
-        "股票名稱": name, "最新股價": round(current_price, 2), "套用公式": formula_note, # 💡 小數點修正
+        "股票名稱": name, "最新股價": round(current_price, 2), "套用公式": formula_note,
         "當季預估均營收": round(est_q1_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps, 2), 
         "預估今年度_EPS": round(est_full_year_eps, 2), "本益比(PER)": round(est_per, 2),         
@@ -97,7 +96,6 @@ watch_list_input = st.sidebar.text_input("📌 VIP 關注清單", value="8358, 8
 st.sidebar.divider()
 st.sidebar.header("📥 資料庫對接")
 
-# 💡 V34 新增：Google Sheets 連結讀取功能
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 default_file_path = None
@@ -114,7 +112,6 @@ uploaded_file = st.sidebar.file_uploader("或手動上傳備用檔 (CSV/Excel)",
 df_upload = None
 try:
     if gsheet_url:
-        # 自動把使用者貼上的共用連結，轉換成程式看得懂的 CSV 下載連結
         sheet_id_match = re.search(r'd/([a-zA-Z0-9-_]+)', gsheet_url)
         if sheet_id_match:
             sheet_id = sheet_id_match.group(1)
@@ -197,18 +194,18 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
         
-        st.session_state["stock_db_v34"] = stock_db
+        st.session_state["stock_db_v35"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v34" in st.session_state:
+if "stock_db_v35" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v34"].items():
+            for code, data in st.session_state["stock_db_v35"].items():
                 price = data["price"]
                 if use_yahoo:
                     try: 
@@ -229,11 +226,11 @@ if "stock_db_v34" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v34"] = pd.DataFrame(results)
+            st.session_state["df_final_v35"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v34" in st.session_state:
-    df = st.session_state["df_final_v34"].copy()
+if "df_final_v35" in st.session_state:
+    df = st.session_state["df_final_v35"].copy()
     
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
@@ -247,8 +244,18 @@ if "df_final_v34" in st.session_state:
         st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採H2/H1比例)", unsafe_allow_html=True)
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
         stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
-        # 💡 確保這排文字的小數點永遠只顯示兩位
-        st.markdown(f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ EPS **{stock_row['預估今年度_EPS']}元** ｜ 殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ 成長率 **{stock_row['預估年成長率(%)']}%**")
+        
+        # 💡 V35 升級：加入合約負債與季增率顯示
+        liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
+        liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
+        
+        st.markdown(
+            f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
+            f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
+            f"殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ "
+            f"成長率 **{stock_row['預估年成長率(%)']}%** ｜ "
+            f"📈 合約負債 **{liab_value}億 ({liab_qoq}%)**"
+        )
 
     with col2:
         chart_data = pd.DataFrame({
