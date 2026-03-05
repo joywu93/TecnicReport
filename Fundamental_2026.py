@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V63 完美座標入座版)")
+st.title("📊 2026 戰略指揮 (V64 終極座標抗干擾版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V63 新增：絕對座標法 + HTML 即時源 (完美解法)
+# 🌟 V64 新增：雙重認證鎖定法 (免疫導覽列雜訊)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -112,7 +112,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("啟動情報引擎：依據指定欄位，精準對照入座中...", expanded=True) as status:
+        with st.status("啟動情報引擎：啟用雙重認證防護網，精準對照入座中...", expanded=True) as status:
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -157,9 +157,9 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     df_all_list = []
                     headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                     
-                    st.write(f"3. 啟動絕對座標對應系統：定位表頭，精準抓取...")
+                    st.write(f"3. 啟動絕對座標對應系統：定位表頭，過濾網頁雜訊...")
                     
-                    # 💡 核心武器：HTML 表格絕對座標解析器 (您的戰術完美實現)
+                    # 💡 核心武器：HTML 表格絕對座標解析器 (V64 雙重認證防護)
                     def parse_html_table(html_content):
                         extracted = []
                         rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html_content, flags=re.I|re.S)
@@ -171,20 +171,26 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                             
                             clean_cols = [re.sub(r'<[^>]*>', '', c).replace(',', '').replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
                             
-                            # 尋找標題列，鎖定絕對座標
-                            if idx_code == -1:
+                            # 💡 V64 雙重認證鎖定法：必須在「同一行」同時找到代號與營收，才算抓到真正的表格標題！
+                            if idx_code == -1 or idx_rev == -1:
+                                temp_code, temp_rev, temp_yoy, temp_mom = -1, -1, -1, -1
                                 for i, c in enumerate(clean_cols):
-                                    if '公司代號' in c or '股票名稱' in c or '公司' in c: idx_code = i
-                                    elif '當月營收' in c or '營收(千)' in c: idx_rev = i
-                                    elif '上月比較' in c or '比上月' in c or '月增' in c: idx_mom = i
-                                    elif ('去年同月' in c or '年增' in c) and idx_yoy == -1: idx_yoy = i # 只抓第一個出現的年增，完全無視累計營收
+                                    if '公司代號' in c or '股票名稱' in c or '股票' in c or '公司' in c: temp_code = i
+                                    elif '當月營收' in c or '營收(千)' in c or '營收' in c: temp_rev = i
+                                    elif '上月比較' in c or '比上月' in c or '月增' in c: temp_mom = i
+                                    elif ('去年同月' in c or '年增' in c) and temp_yoy == -1: temp_yoy = i 
+                                
+                                # 只有當代號和營收都存在時，才將座標正式鎖定
+                                if temp_code != -1 and temp_rev != -1:
+                                    idx_code, idx_rev, idx_yoy, idx_mom = temp_code, temp_rev, temp_yoy, temp_mom
                                 continue 
                                 
-                            # 依照鎖定的座標抓取資料
+                            # 依照鎖定的嚴格座標抓取資料
                             if idx_code != -1 and idx_rev != -1 and len(clean_cols) > max(idx_code, idx_rev):
                                 code_str = clean_cols[idx_code]
                                 rev_str = clean_cols[idx_rev]
                                 
+                                # 安全抽出4碼代號
                                 code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', code_str)
                                 if code_match and re.match(r'^-?\d+(\.\d+)?$', rev_str):
                                     code = code_match.group(1)
@@ -217,9 +223,9 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                     mdj_count += len(res_list)
                         except Exception: pass
                     
-                    st.write(f"✔️ 渦輪一 (MoneyDJ)：對照座標成功，截獲 {mdj_count} 筆 VIP 專屬情報！")
+                    st.write(f"✔️ 渦輪一 (MoneyDJ)：對照座標成功，精準截獲 {mdj_count} 筆 VIP 專屬情報！")
                     
-                    # 💡 渦輪二：政府 HTML 隱藏後門 (V63修正：改回最即時的 HTML 網頁，不再抓空的 CSV)
+                    # 💡 渦輪二：政府即時 HTML 隱藏後門
                     gov_count = 0
                     gov_urls = [
                         f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
@@ -305,7 +311,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 st.error(f"❌ 詳細錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎 (這裡補齊了之前漏掉的字！)
+# 3. 讀取與解析引擎
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -362,7 +368,6 @@ try:
             code = str(row[c_code]).split('.')[0].strip() if c_code and pd.notna(row[c_code]) else ""
             if len(code) < 3: continue 
             
-            # 💡 已經修正，絕對不會報錯了！
             def get_val(col_name, default=0.0):
                 if col_name and pd.notna(row[col_name]):
                     try: return float(str(row[col_name]).replace(',', '').replace(' ', '').strip() or default)
@@ -382,18 +387,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v63"] = stock_db
+        st.session_state["stock_db_v64"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v63" in st.session_state:
+if "stock_db_v64" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v63"].items():
+            for code, data in st.session_state["stock_db_v64"].items():
                 
                 price = data["price"]
                 try: 
@@ -420,11 +425,11 @@ if "stock_db_v63" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v63"] = pd.DataFrame(results)
+            st.session_state["df_final_v64"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v63" in st.session_state:
-    df = st.session_state["df_final_v63"].copy()
+if "df_final_v64" in st.session_state:
+    df = st.session_state["df_final_v64"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
