@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V59 終極鎖定收割版)")
+st.title("📊 2026 戰略指揮 (V60 絕對座標入座版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V59 新增：終極邊界鎖定 (徹底根除切錯數字的問題)
+# 🌟 V60 新增：絕對座標對應法 (指定欄位精準入座)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -112,7 +112,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("啟動雙渦輪情報引擎：啟用邊界防護，精準收割中...", expanded=True) as status:
+        with st.status("啟動情報引擎：依據指定欄位，精準對照入座中...", expanded=True) as status:
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -121,7 +121,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                 client = gspread.authorize(creds)
                 
-                st.write("2. 掃描您的 Google 試算表尋找全套欄位...")
+                st.write("2. 掃描您的 Google 試算表尋找接收欄位...")
                 sheet = client.open_by_url(gsheet_url).sheet1
                 all_data = sheet.get_all_values()
                 headers = all_data[0]
@@ -157,9 +157,9 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     df_all_list = []
                     headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                     
-                    st.write(f"3. 雙渦輪啟動！全屬性特徵解碼，直搗情報網...")
+                    st.write(f"3. 啟動對應程式：尋找 MoneyDJ 座標，過濾累計營收...")
                     
-                    # 💡 渦輪一：推土機 MoneyDJ 搶先報 (V59：嚴格邊界鎖定)
+                    # 💡 渦輪一：MoneyDJ 絕對座標對應法
                     mdj_count = 0
                     for p in range(1, 6):
                         try:
@@ -167,30 +167,56 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                             res = requests.get(url, headers=headers_agent, verify=False, timeout=8)
                             if res.status_code == 200:
                                 res.encoding = 'big5'
-                                html_content = res.text
-                                html_content = re.sub(r'<script.*?</script>', ' ', html_content, flags=re.I|re.S)
-                                html_content = re.sub(r'<style.*?</style>', ' ', html_content, flags=re.I|re.S)
-                                text = re.sub(r'<[^>]+>', ' ', html_content)
-                                text = text.replace(',', '').replace('\u3000', ' ').replace('&nbsp;', ' ').replace('%', '')
-                                text = re.sub(r'\s+', ' ', text)
+                                html = res.text
                                 
-                                # 💡 V59 核心修復：(?<!\d)(\d{4})(?!\d) 確保代號前後絕對不能有其他數字！
-                                # 這樣 1,802,733 就不會被誤認為 1802 台玻了！
-                                pattern = r'(?<!\d)(\d{4})(?!\d)\s*([^\s\d]+[^\s]*)\s+(-?\d+)\s+(-?[\d\.]+|-)\s+(-?[\d\.]+|-)'
-                                matches = re.findall(pattern, text)
+                                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, flags=re.I|re.S)
                                 
-                                res_list = []
-                                for code, name, rev, yoy, mom in matches:
-                                    if code in row_map: # 只抓清單裡有的
-                                        yoy_val = yoy if yoy != '-' else ""
-                                        mom_val = mom if mom != '-' else ""
-                                        res_list.append({'公司代號': code, '當月營收': rev, '月增率': mom_val, '年增率': yoy_val})
-                                        mdj_count += 1
-                                if res_list:
-                                    df_all_list.append(pd.DataFrame(res_list))
+                                idx_code, idx_rev, idx_yoy, idx_mom = -1, -1, -1, -1
+                                
+                                for r in rows:
+                                    cols = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', r, flags=re.I|re.S)
+                                    if not cols: continue
+                                    
+                                    clean_cols = [re.sub(r'<[^>]*>', '', c).replace(',', '').replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
+                                    
+                                    # 1. 尋找標題列，鎖定座標
+                                    if idx_code == -1:
+                                        for i, c in enumerate(clean_cols):
+                                            if '股票名稱' in c or '公司' in c: idx_code = i
+                                            elif '營收(千)' in c or '當月營收' in c: idx_rev = i
+                                            elif '比上月' in c or '月增' in c: idx_mom = i
+                                            elif '年增率' in c and idx_yoy == -1: idx_yoy = i # 只抓第一個出現的年增率，避開後面的累計年增率
+                                        continue # 找到標題後，換下一行抓資料
+                                    
+                                    # 2. 依照座標抓取資料
+                                    if idx_code != -1 and idx_rev != -1 and len(clean_cols) > max(idx_code, idx_rev):
+                                        code_str = clean_cols[idx_code]
+                                        rev_str = clean_cols[idx_rev]
+                                        
+                                        # 用正規表達式安全抽出4碼代號
+                                        code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', code_str)
+                                        if code_match and re.match(r'^-?\d+(\.\d+)?$', rev_str):
+                                            code = code_match.group(1)
+                                            
+                                            # 只抓我們清單內的股票，大幅減少處理時間
+                                            if code in row_map:
+                                                yoy_str = clean_cols[idx_yoy].replace('%', '') if idx_yoy != -1 and len(clean_cols) > idx_yoy else ""
+                                                mom_str = clean_cols[idx_mom].replace('%', '') if idx_mom != -1 and len(clean_cols) > idx_mom else ""
+                                                
+                                                # 確認抓到的是數字
+                                                yoy_val = yoy_str if re.match(r'^-?\d+(\.\d+)?$', yoy_str) else ""
+                                                mom_val = mom_str if re.match(r'^-?\d+(\.\d+)?$', mom_str) else ""
+                                                
+                                                df_all_list.append(pd.DataFrame([{
+                                                    '公司代號': code, 
+                                                    '當月營收': rev_str,
+                                                    '月增率': mom_val,
+                                                    '年增率': yoy_val
+                                                }]))
+                                                mdj_count += 1
                         except Exception: pass
                     
-                    st.write(f"✔️ 渦輪一 (MoneyDJ)：成功解碼並收割 {mdj_count} 筆您的 VIP 完整情報！")
+                    st.write(f"✔️ 渦輪一 (MoneyDJ)：對照入座成功，截獲 {mdj_count} 筆 VIP 專屬情報！")
                     
                     # 💡 渦輪二：政府 CSV 隱藏後門
                     url_dict = {
@@ -220,7 +246,6 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                     df['公司代號'] = df['公司代號'].astype(str).str.strip()
                                     df = df[~df['公司代號'].str.contains('合計|總計|備註', na=False)]
                                     
-                                    # 抓出增減率欄位
                                     rev_c = next((c for c in df.columns if '當月營收' in c), None)
                                     mom_c = next((c for c in df.columns if '上月比較' in c or '月增' in c), None)
                                     yoy_c = next((c for c in df.columns if '去年同月' in c or '年增' in c), None)
@@ -261,7 +286,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                 row_idx = row_map[code]
                                 has_update = False
                                 
-                                # 寫入主力營收
+                                # 寫入主力營收 (換算億元)
                                 try:
                                     revenue_str = str(row['當月營收']).replace(',', '').strip()
                                     if revenue_str and revenue_str.replace('.', '', 1).replace('-', '', 1).isdigit():
@@ -270,7 +295,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                         has_update = True
                                 except: pass
                                 
-                                # 寫入月增率
+                                # 寫入月增率 (直接填入)
                                 try:
                                     if mom_col_idx != -1 and pd.notna(row.get('月增率')) and str(row['月增率']).strip() != "":
                                         mom_str = str(row['月增率']).replace(',', '').strip()
@@ -278,7 +303,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                             cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(mom_str)))
                                 except: pass
                                 
-                                # 寫入年增率
+                                # 寫入年增率 (直接填入)
                                 try:
                                     if yoy_col_idx != -1 and pd.notna(row.get('年增率')) and str(row['年增率']).strip() != "":
                                         yoy_str = str(row['年增率']).replace(',', '').strip()
@@ -369,114 +394,4 @@ try:
             code = str(row[c_code]).split('.')[0].strip() if c_code and pd.notna(row[c_code]) else ""
             if len(code) < 3: continue 
             def get_val(col_name, default=0.0):
-                if col_name and pd.notna(row[col_name]):
-                    try: return float(str(row[col_name]).replace(',', '').replace(' ', '').strip() or default)
-                    except: return default
-                return default
-            
-            rev_q4 = get_val(c_ly_q4) or (get_val(c_rev_10) + get_val(c_rev_last_11) + get_val(c_rev_last_12))
-            eps_q3, eps_q4 = get_val(c_eps_q3), get_val(c_eps_q4)
-            rev_q3 = get_val(c_ly_q3)
-            base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
-
-            stock_db[code] = {
-                "name": str(row[c_name]) if c_name else "未知", "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_rev_last_12),
-                "rev_this_1": get_val(c_rev_this_1), "rev_this_2": get_val(c_rev_this_2), "rev_this_3": get_val(c_rev_this_3),
-                "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
-                "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
-                "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
-                "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
-            }
-        st.session_state["stock_db_v59"] = stock_db
-except Exception as e:
-    if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
-
-# ==========================================
-# 4. 執行與呈現
-# ==========================================
-if "stock_db_v59" in st.session_state:
-    if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
-        with st.spinner("雲端運算中..."):
-            results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v59"].items():
-                
-                price = data["price"]
-                try: 
-                    hist = yf.Ticker(f"{code}.TW").history(period="1d", interval="1m")
-                    if not hist.empty: price = hist['Close'].dropna().iloc[-1]
-                    else:
-                        hist_otc = yf.Ticker(f"{code}.TWO").history(period="1d", interval="1m")
-                        if not hist_otc.empty: price = hist_otc['Close'].dropna().iloc[-1]
-                except: 
-                    try:
-                        hist_otc = yf.Ticker(f"{code}.TWO").history(period="1d", interval="1m")
-                        if not hist_otc.empty: price = hist_otc['Close'].dropna().iloc[-1]
-                    except: pass 
-                
-                res = auto_strategic_model(
-                    name=f"{code} {data['name']}", current_month=simulated_month,
-                    rev_last_11=data.get("rev_last_11",0), rev_last_12=data.get("rev_last_12",0), rev_this_1=data.get("rev_this_1",0), rev_this_2=data.get("rev_this_2",0), rev_this_3=data.get("rev_this_3",0),
-                    base_q_eps=data["base_q_eps"], non_op_ratio=data["non_op"], base_q_avg_rev=data["base_q_avg_rev"],
-                    ly_q1_rev=data["ly_q1_rev"], ly_q2_rev=data["ly_q2_rev"], ly_q3_rev=data["ly_q3_rev"], ly_q4_rev=data["ly_q4_rev"],
-                    y1_q1_rev=data["y1_q1_rev"], y1_q2_rev=data["y1_q2_rev"], y1_q3_rev=data["y1_q3_rev"], y1_q4_rev=data["y1_q4_rev"],
-                    recent_payout_ratio=data["payout"], current_price=price, 
-                    contract_liab=data.get("contract_liab", 0), contract_liab_qoq=data.get("contract_liab_qoq", 0)
-                )
-                current_rule_note = res["套用公式"] 
-                results.append(res)
-            
-            st.session_state["df_final_v59"] = pd.DataFrame(results)
-            st.session_state["current_rule_note"] = current_rule_note
-
-if "df_final_v59" in st.session_state:
-    df = st.session_state["df_final_v59"].copy()
-    watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-    if watch_list:
-        df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
-        df['股票名稱'] = df.apply(lambda row: f"⭐ {row['股票名稱']}" if row['is_vip'] == 1 else row['股票名稱'], axis=1)
-    else: df['is_vip'] = 0
-
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採H2/H1比例)", unsafe_allow_html=True)
-        selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
-        stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
-        
-        liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
-        liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
-        
-        st.markdown(
-            f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
-            f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
-            f"殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ "
-            f"成長率 **{stock_row['預估年成長率(%)']}%** ｜ "
-            f"📈 合約負債 **{liab_value}億 ({liab_qoq}%)**"
-        )
-
-    with col2:
-        chart_data = pd.DataFrame({
-            "季度": ["Q1", "Q2", "Q3", "Q4"], "1.去年實際": stock_row["_ly_qs"],
-            "2.今年已公布": stock_row["_known_qs"], "3.今年純預估": stock_row["_pure_est_qs"]
-        }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
-        bars = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
-            y=alt.Y('營收(億):Q', title=None), color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top")),
-            column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
-        ).properties(width=55, height=220)
-        st.altair_chart(bars, use_container_width=False) 
-    
-    st.divider()
-    st.markdown(f"### 🎯 【{selected_stock}】 數據特寫 (免受下方大表排序影響)")
-    mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式", "is_vip"])
-    mini_df = mini_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
-    mini_df = mini_df.set_index(["股票名稱", "最新股價"])
-    format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
-    st.dataframe(mini_df.style.apply(lambda x: ['background-color: rgba(255, 235, 59, 0.2)']*len(x), axis=1).format(format_dict), use_container_width=True)
-    
-    st.markdown("### 🧮 2026 全市場戰略數據總表")
-    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
-    display_df = display_df.sort_values(by=['is_vip', '季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False, False]).drop(columns=['is_vip'])
-    display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
-    display_df = display_df.set_index(["股票名稱", "最新股價"])
-    def highlight_yield(val): return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 4.0 else ''
-    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=500, use_container_width=True)
+                if col_name and pd
