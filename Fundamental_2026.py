@@ -10,7 +10,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import json
 import urllib3
-import datetime
 
 # 關閉 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V71 官方真理為主版)")
+st.title("📊 2026 戰略指揮 (V72 三核心裝甲版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -101,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V71 終極武器：官方標準 CSV 優先對位法
+# 🌟 V72 終極武器：三核心裝甲版 (MoneyDJ + 政府 HTML + 政府 CSV)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -113,7 +112,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("貫徹戰略：以台灣交易所官方數據為主，啟動更新...", expanded=True) as status:
+        with st.status("貫徹戰略：三核心引擎啟動，官方數據優先覆蓋...", expanded=True) as status:
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -154,62 +153,11 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     df_all_list = []
                     headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                     
-                    st.write(f"3. 核心戰略啟動：優先讀取台灣交易所官方 CSV 檔案...")
-                    
-                    # ==========================================
-                    # 💡 戰略一：官方 CSV 絕對標準對位 (永遠不變的標準欄位)
-                    # ==========================================
-                    gov_count = 0
-                    gov_urls = [
-                        f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.csv",
-                        f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_1.csv",
-                        f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_0.csv",
-                        f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_1.csv"
-                    ]
-                    for url in gov_urls:
-                        try:
-                            res = requests.get(url, headers=headers_agent, verify=False, timeout=10)
-                            if res.status_code == 200 and len(res.text) > 100: # 確保檔案不是空的
-                                res.encoding = 'big5' 
-                                df_gov = pd.read_csv(io.StringIO(res.text), on_bad_lines='skip', header=None, dtype=str)
-                                
-                                # 尋找官方標準標題列
-                                header_idx = -1
-                                for i in range(min(10, len(df_gov))):
-                                    row_str = "".join([str(x) for x in df_gov.iloc[i]])
-                                    if '公司代號' in row_str and '當月營收' in row_str:
-                                        header_idx = i
-                                        break
-                                
-                                if header_idx != -1:
-                                    df_gov.columns = [str(c).replace('\n', '').replace(' ', '').strip() for c in df_gov.iloc[header_idx]]
-                                    df_gov = df_gov.iloc[header_idx+1:].reset_index(drop=True)
-                                    
-                                    # 官方標準欄位名稱，永遠不會出錯！
-                                    c_code = '公司代號'
-                                    c_rev = '當月營收'
-                                    c_mom = '上月比較增減(%)' # 官方絕對正確的月增率
-                                    c_yoy = '去年同月增減(%)' # 官方絕對正確的年增率
-                                    
-                                    for idx, row in df_gov.iterrows():
-                                        if c_code in row and pd.notna(row[c_code]):
-                                            code = str(row[c_code]).strip()
-                                            if code in row_map: # 只抓您的 VIP
-                                                df_all_list.append({
-                                                    '公司代號': code, 
-                                                    '當月營收': str(row.get(c_rev, '')),
-                                                    '月增率': str(row.get(c_mom, '')),
-                                                    '年增率': str(row.get(c_yoy, '')),
-                                                    '來源優先級': 1 # 官方資料最優先！
-                                                })
-                                                gov_count += 1
-                        except Exception: pass
-                    
-                    st.write(f"✔️ 台灣交易所 (官方 CSV)：成功對位並截獲 {gov_count} 筆穩固情報！")
+                    def clean_num(val):
+                        v = str(val).replace(',', '').replace('%', '').strip()
+                        return v if re.match(r'^-?\d+(\.\d+)?$', v) else ""
 
-                    # ==========================================
-                    # 💡 戰略二：MoneyDJ 早鳥輔助 (10號前官方可能沒資料時的備案)
-                    # ==========================================
+                    st.write(f"3. 啟動【核心一】: 攔截民間 MoneyDJ 早鳥快報...")
                     mdj_count = 0
                     for p in range(1, 6):
                         try:
@@ -217,44 +165,98 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                             res = requests.get(url, headers=headers_agent, verify=False, timeout=8)
                             if res.status_code == 200:
                                 res.encoding = 'big5'
-                                # 最簡單暴力的順藤摸瓜 (代號 -> 營收 -> 年增 -> 月增)
-                                html_clean = re.sub(r'<script.*?</script>', ' ', res.text, flags=re.I|re.S)
-                                html_clean = re.sub(r'<style.*?</style>', ' ', html_clean, flags=re.I|re.S)
-                                html_clean = html_clean.replace('>', '> ').replace('<', ' <')
-                                text = re.sub(r'<[^>]+>', ' ', html_clean)
-                                text = text.replace(',', '').replace('%', '').replace('\u3000', ' ').replace('&nbsp;', ' ')
-                                text = re.sub(r'(?<!\d)(\d{4})(?!\d)', r' \1 ', text)
-                                
-                                tokens = text.split()
-                                for i, token in enumerate(tokens):
-                                    if re.fullmatch(r'\d{4}', token) and token in row_map:
-                                        nums = []
-                                        for j in range(i + 1, min(i + 20, len(tokens))):
-                                            if re.match(r'^-?\d+(\.\d+)?$', tokens[j]) or tokens[j] == '-':
-                                                nums.append(tokens[j])
-                                            if len(nums) == 3: break
-                                        
-                                        if len(nums) == 3:
-                                            df_all_list.append({
-                                                '公司代號': token, 
-                                                '當月營收': nums[0],
-                                                '年增率': nums[1] if nums[1] != '-' else "",
-                                                '月增率': nums[2] if nums[2] != '-' else "",
-                                                '來源優先級': 2 # MoneyDJ 為輔助，會被官方資料覆蓋
-                                            })
-                                            mdj_count += 1
+                                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', res.text, flags=re.I|re.S)
+                                for r in rows:
+                                    cols = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', r, flags=re.I|re.S)
+                                    clean_cols = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
+                                    # MoneyDJ 絕對位置：0.代號, 1.營收, 2.年增, 3.月增
+                                    if len(clean_cols) >= 4:
+                                        code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', clean_cols[0])
+                                        if code_match:
+                                            code = code_match.group(1)
+                                            rev = clean_num(clean_cols[1])
+                                            if code in row_map and rev:
+                                                df_all_list.append({
+                                                    '公司代號': code, '當月營收': rev,
+                                                    '年增率': clean_num(clean_cols[2]), '月增率': clean_num(clean_cols[3]),
+                                                    '來源優先級': 3 # 優先級別最低，可被官方覆蓋
+                                                })
+                                                mdj_count += 1
                         except Exception: pass
-                    
-                    st.write(f"✔️ 民間網頁 (MoneyDJ)：輔助截獲 {mdj_count} 筆早鳥情報！")
+                    st.write(f"✔️ MoneyDJ：成功攔截 {mdj_count} 筆早鳥情報！")
+
+                    st.write(f"4. 啟動【核心二】: 攔截政府公開觀測站 (即時 HTML)...")
+                    gov_html_count = 0
+                    gov_urls = [
+                        f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
+                        f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_1.html",
+                        f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_0.html",
+                        f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_1.html"
+                    ]
+                    for url in gov_urls:
+                        try:
+                            res = requests.get(url, headers=headers_agent, verify=False, timeout=8)
+                            if res.status_code == 200 and len(res.text) > 50:
+                                res.encoding = 'big5' 
+                                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', res.text, flags=re.I|re.S)
+                                for r in rows:
+                                    cols = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', r, flags=re.I|re.S)
+                                    clean_cols = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
+                                    # 政府 HTML 絕對位置：0.代號, 2.當月營收, 5.月增率, 6.年增率
+                                    if len(clean_cols) >= 7:
+                                        code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', clean_cols[0])
+                                        if code_match:
+                                            code = code_match.group(1)
+                                            rev = clean_num(clean_cols[2])
+                                            if code in row_map and rev:
+                                                df_all_list.append({
+                                                    '公司代號': code, '當月營收': rev,
+                                                    '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]),
+                                                    '來源優先級': 2 # 政府 HTML 優先級較高
+                                                })
+                                                gov_html_count += 1
+                        except Exception: pass
+                    st.write(f"✔️ 政府 HTML：成功攔截 {gov_html_count} 筆官方即時情報！")
+
+                    st.write(f"5. 啟動【核心三】: 讀取政府最終 CSV 結算檔 (10號過後發威)...")
+                    gov_csv_count = 0
+                    gov_csv_urls = [url.replace('.html', '.csv') for url in gov_urls]
+                    for url in gov_csv_urls:
+                        try:
+                            res = requests.get(url, headers=headers_agent, verify=False, timeout=8)
+                            if res.status_code == 200 and len(res.text) > 100:
+                                res.encoding = 'big5' 
+                                df_gov = pd.read_csv(io.StringIO(res.text), on_bad_lines='skip', header=None, dtype=str)
+                                header_idx = -1
+                                for i in range(min(10, len(df_gov))):
+                                    row_str = "".join([str(x) for x in df_gov.iloc[i]])
+                                    if '公司代號' in row_str and '當月營收' in row_str:
+                                        header_idx = i; break
+                                
+                                if header_idx != -1:
+                                    df_gov.columns = [str(c).replace('\n', '').replace(' ', '').strip() for c in df_gov.iloc[header_idx]]
+                                    df_gov = df_gov.iloc[header_idx+1:].reset_index(drop=True)
+                                    for idx, row in df_gov.iterrows():
+                                        if '公司代號' in row and pd.notna(row['公司代號']):
+                                            code = str(row['公司代號']).strip()
+                                            if code in row_map: 
+                                                df_all_list.append({
+                                                    '公司代號': code, 
+                                                    '當月營收': clean_num(row.get('當月營收', '')),
+                                                    '月增率': clean_num(row.get('上月比較增減(%)', '')),
+                                                    '年增率': clean_num(row.get('去年同月增減(%)', '')),
+                                                    '來源優先級': 1 # 官方 CSV 最高優先級！
+                                                })
+                                                gov_csv_count += 1
+                        except Exception: pass
+                    st.write(f"✔️ 政府 CSV：成功讀取 {gov_csv_count} 筆官方結算情報！")
 
                     if not df_all_list:
-                        status.update(label=f"⚠️ 目前官方與民間皆尚未發現您的 VIP 公佈營收", state="error", expanded=True)
+                        status.update(label=f"⚠️ 目前三核心引擎皆尚未發現您的 VIP 公佈營收", state="error", expanded=True)
                     else:
-                        st.write("4. 統整資料！以『官方數據』覆蓋民間數據...")
+                        st.write("6. 啟動王者覆蓋！剔除重複，確保官方數據優先寫入...")
                         df_early = pd.DataFrame(df_all_list)
-                        
-                        # 💡 核心過濾：先照「來源優先級」排序 (官方 1 在前，民間 2 在後)
-                        # 然後去除重複的代號，保留排在前面的(官方資料)！
+                        # 依照來源優先級排序 (1最前面)，然後去除重複代號，保留最高級別的數據
                         df_early = df_early.sort_values('來源優先級')
                         df_early = df_early.drop_duplicates(subset=['公司代號'], keep='first') 
                         
@@ -266,29 +268,21 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                             row_idx = row_map[code]
                             has_update = False
                             
-                            # 寫入營收 (換算億元)
                             try:
-                                revenue_str = str(row['當月營收']).replace(',', '').strip()
-                                if revenue_str and revenue_str.replace('.', '', 1).replace('-', '', 1).isdigit():
-                                    revenue_100m = round(float(revenue_str) / 100000, 2)
+                                if row['當月營收'] != "":
+                                    revenue_100m = round(float(row['當月營收']) / 100000, 2)
                                     cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=revenue_100m))
                                     has_update = True
                             except: pass
                             
-                            # 寫入月增率
                             try:
-                                if mom_col_idx != -1 and pd.notna(row.get('月增率')) and str(row['月增率']).strip() != "":
-                                    mom_str = str(row['月增率']).replace(',', '').strip()
-                                    if mom_str.replace('.', '', 1).replace('-', '', 1).isdigit():
-                                        cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(mom_str)))
+                                if mom_col_idx != -1 and row['月增率'] != "":
+                                    cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
                             except: pass
                             
-                            # 寫入年增率
                             try:
-                                if yoy_col_idx != -1 and pd.notna(row.get('年增率')) and str(row['年增率']).strip() != "":
-                                    yoy_str = str(row['年增率']).replace(',', '').strip()
-                                    if yoy_str.replace('.', '', 1).replace('-', '', 1).isdigit():
-                                        cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(yoy_str)))
+                                if yoy_col_idx != -1 and row['年增率'] != "":
+                                    cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
                             except: pass
                             
                             if has_update: update_count += 1
@@ -296,19 +290,18 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                         # 自動變更標題
                         year_prefix = str(roc_year + 1911)[-2:] 
                         new_header_prefix = f"{year_prefix}M{target_m_header}"
-                        
                         if mom_col_idx != -1:
                             cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{new_header_prefix}單月營收月增(%)"))
                         if yoy_col_idx != -1:
                             cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{new_header_prefix}單月營收年增(%)"))
 
                         if cells_to_update:
-                            st.write("5. 發射！瞬間寫入 Google 試算表...")
+                            st.write("7. 發射！瞬間寫入 Google 試算表...")
                             sheet.update_cells(cells_to_update)
-                            status.update(label=f"🎉 戰略大成功！完美為 {update_count} 檔 VIP 填滿官方標準數據！", state="complete", expanded=False)
+                            status.update(label=f"🎉 戰略大成功！完美為 {update_count} 檔 VIP 填寫最新數據！", state="complete", expanded=False)
                             st.balloons()
                         else:
-                            status.update(label="⚠️ 情報網有抓到名單，但您的清單中尚未有人交卷", state="error", expanded=True)
+                            status.update(label="⚠️ 引擎有抓到資料，但您的清單中尚未有人交卷", state="error", expanded=True)
                         
             except Exception as e:
                 status.update(label="任務中斷 (請看下方紅字說明)", state="error", expanded=True)
@@ -391,18 +384,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v71"] = stock_db
+        st.session_state["stock_db_v72"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v71" in st.session_state:
+if "stock_db_v72" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v71"].items():
+            for code, data in st.session_state["stock_db_v72"].items():
                 
                 price = data["price"]
                 try: 
@@ -429,11 +422,11 @@ if "stock_db_v71" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v71"] = pd.DataFrame(results)
+            st.session_state["df_final_v72"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v71" in st.session_state:
-    df = st.session_state["df_final_v71"].copy()
+if "df_final_v72" in st.session_state:
+    df = st.session_state["df_final_v72"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
