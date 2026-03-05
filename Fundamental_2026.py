@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V85 戰略落定版)")
+st.title("📊 2026 戰略指揮 (V86 權限貫通版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -143,7 +143,6 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                 creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                 client = gspread.authorize(creds)
                 
-                # 💡 V85：明確綁定寫入分頁名稱，防止分頁被拖動順序導致寫錯地方
                 sheet = client.open_by_url(gsheet_url).worksheet("個股總表")
                 all_data = sheet.get_all_values()
                 headers = all_data[0]
@@ -268,17 +267,23 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
                 st.error(f"獲取名單失敗，請稍後再試。({e})")
 
 # ==========================================
-# 3. 讀取與解析引擎 (讀取資料以供運算展示)
+# 3. 讀取與解析引擎 (全面改用 gspread 安全直連)
 # ==========================================
 df_upload = None
 try:
-    if gsheet_url:
-        sheet_id_match = re.search(r'd/([a-zA-Z0-9-_]+)', gsheet_url)
-        if sheet_id_match:
-            sheet_id = sheet_id_match.group(1)
-            # 💡 保持讀取 gid=0 的第一張表 (因為 CSV 匯出連結預設是抓第一頁，只要「個股總表」排第一就沒問題)
-            csv_export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
-            df_upload = pd.read_csv(csv_export_url)
+    if gsheet_url and "google_key" in st.secrets:
+        # 💡 V86 終極解法：使用金鑰直接開啟「個股總表」，徹底解決公開連結與 gid 抓錯頁面的問題
+        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+        key_dict = json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"])
+        creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        
+        sheet_main = client.open_by_url(gsheet_url).worksheet("個股總表")
+        all_data = sheet_main.get_all_values()
+        
+        if len(all_data) > 0:
+            # 將抓下來的資料轉回 DataFrame 讓下方引擎繼續運作
+            df_upload = pd.DataFrame(all_data[1:], columns=all_data[0])
 
     if df_upload is not None:
         cols = df_upload.columns.tolist()
@@ -329,21 +334,21 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v85"] = stock_db
+        st.session_state["stock_db_v86"] = stock_db
 except Exception as e:
-    st.error(f"檔案解析失敗，請確認連結與權限。")
+    st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v85" in st.session_state:
+if "stock_db_v86" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
             
             vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
             
-            for code, data in st.session_state["stock_db_v85"].items():
+            for code, data in st.session_state["stock_db_v86"].items():
                 if code not in vip_list_parsed:
                     continue
                 
@@ -362,13 +367,13 @@ if "stock_db_v85" in st.session_state:
                 results.append(res)
             
             if results:
-                st.session_state["df_final_v85"] = pd.DataFrame(results)
+                st.session_state["df_final_v86"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
             else:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
 
-if "df_final_v85" in st.session_state:
-    df = st.session_state["df_final_v85"].copy()
+if "df_final_v86" in st.session_state:
+    df = st.session_state["df_final_v86"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
