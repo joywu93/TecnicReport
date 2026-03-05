@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V72 三核心裝甲版)")
+st.title("📊 2026 戰略指揮 (V73 終極官方加冕版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V72 終極武器：三核心裝甲版 (MoneyDJ + 政府 HTML + 政府 CSV)
+# 🌟 V73 終極武器：官方雙核心護航 (HTML即時 + CSV結算)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -112,7 +112,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("貫徹戰略：三核心引擎啟動，官方數據優先覆蓋...", expanded=True) as status:
+        with st.status("貫徹戰略：三核心引擎啟動，官方數據絕對優先...", expanded=True) as status:
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -151,7 +151,11 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     roc_year = 115 # 2026 年
                     query_m = str(int(auto_month))
                     df_all_list = []
-                    headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    # 加入完整的 Headers 模擬真實瀏覽器，提升爬蟲穩定度
+                    headers_agent = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    }
                     
                     def clean_num(val):
                         v = str(val).replace(',', '').replace('%', '').strip()
@@ -169,7 +173,6 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                 for r in rows:
                                     cols = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', r, flags=re.I|re.S)
                                     clean_cols = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
-                                    # MoneyDJ 絕對位置：0.代號, 1.營收, 2.年增, 3.月增
                                     if len(clean_cols) >= 4:
                                         code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', clean_cols[0])
                                         if code_match:
@@ -179,13 +182,13 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                                 df_all_list.append({
                                                     '公司代號': code, '當月營收': rev,
                                                     '年增率': clean_num(clean_cols[2]), '月增率': clean_num(clean_cols[3]),
-                                                    '來源優先級': 3 # 優先級別最低，可被官方覆蓋
+                                                    '來源優先級': 3 # 民間資料優先級最低
                                                 })
                                                 mdj_count += 1
                         except Exception: pass
-                    st.write(f"✔️ MoneyDJ：成功攔截 {mdj_count} 筆早鳥情報！")
+                    st.write(f"✔️ MoneyDJ：掃描完成，攔截 {mdj_count} 筆 (許多可能已掉出首頁而未抓取)")
 
-                    st.write(f"4. 啟動【核心二】: 攔截政府公開觀測站 (即時 HTML)...")
+                    st.write(f"4. 啟動【核心二】: 攔截政府公開觀測站 (即時 HTML 最新公佈榜)...")
                     gov_html_count = 0
                     gov_urls = [
                         f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
@@ -212,11 +215,11 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                                 df_all_list.append({
                                                     '公司代號': code, '當月營收': rev,
                                                     '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]),
-                                                    '來源優先級': 2 # 政府 HTML 優先級較高
+                                                    '來源優先級': 2 # 官方即時榜單，優先級高！
                                                 })
                                                 gov_html_count += 1
                         except Exception: pass
-                    st.write(f"✔️ 政府 HTML：成功攔截 {gov_html_count} 筆官方即時情報！")
+                    st.write(f"✔️ 政府 HTML：無敵總表發威，精準攔截 {gov_html_count} 筆官方情報！")
 
                     st.write(f"5. 啟動【核心三】: 讀取政府最終 CSV 結算檔 (10號過後發威)...")
                     gov_csv_count = 0
@@ -245,11 +248,11 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                                     '當月營收': clean_num(row.get('當月營收', '')),
                                                     '月增率': clean_num(row.get('上月比較增減(%)', '')),
                                                     '年增率': clean_num(row.get('去年同月增減(%)', '')),
-                                                    '來源優先級': 1 # 官方 CSV 最高優先級！
+                                                    '來源優先級': 1 # 官方 CSV 結算榜單，最高優先級！
                                                 })
                                                 gov_csv_count += 1
                         except Exception: pass
-                    st.write(f"✔️ 政府 CSV：成功讀取 {gov_csv_count} 筆官方結算情報！")
+                    st.write(f"✔️ 政府 CSV：(若為 10 號前，此處為 0 屬正常現象) 讀取 {gov_csv_count} 筆。")
 
                     if not df_all_list:
                         status.update(label=f"⚠️ 目前三核心引擎皆尚未發現您的 VIP 公佈營收", state="error", expanded=True)
@@ -384,18 +387,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v72"] = stock_db
+        st.session_state["stock_db_v73"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v72" in st.session_state:
+if "stock_db_v73" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v72"].items():
+            for code, data in st.session_state["stock_db_v73"].items():
                 
                 price = data["price"]
                 try: 
@@ -422,11 +425,11 @@ if "stock_db_v72" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v72"] = pd.DataFrame(results)
+            st.session_state["df_final_v73"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v72" in st.session_state:
-    df = st.session_state["df_final_v72"].copy()
+if "df_final_v73" in st.session_state:
+    df = st.session_state["df_final_v73"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
