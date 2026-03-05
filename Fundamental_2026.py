@@ -33,18 +33,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V88 自動記憶帳號版)")
+st.title("📊 2026 戰略指揮 (V89 節氣與智能股利版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
 # ==========================================
-def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps):
+def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
     if current_month == 1:
         est_q1_avg, formula_note, known_q1 = (rev_last_11 + rev_last_12) / 2, "採上年11、12月均值", 0
     elif current_month == 2:
         est_q1_avg, formula_note, known_q1 = rev_this_1 * 0.9, "採當年1月營收×0.9", rev_this_1
     elif current_month == 3:
-        est_q1_avg, formula_note, known_q1 = (rev_this_1 + rev_this_2) / 2, "採當年1、2月均值", rev_this_1 + rev_this_2
+        # 💡 V89 春節權重判讀：針對 2 月工作天較少，採 (1月x2 + 2月)/3
+        est_q1_avg = (rev_this_1 * 2 + rev_this_2) / 3
+        formula_note = "採春節權重(1月x2+2月)/3"
+        known_q1 = rev_this_1 + rev_this_2
     else:
         est_q1_avg, formula_note, known_q1 = (rev_this_1 + rev_this_2 + rev_this_3) / 3, "採當年Q1實際均值", rev_this_1 + rev_this_2 + rev_this_3
 
@@ -75,7 +78,22 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     current_price = float(current_price) if current_price else 0.0
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio == 0 else recent_payout_ratio)
-    forward_yield = (est_full_year_eps * (calc_payout_ratio / 100)) / current_price * 100 if est_full_year_eps > 0 and current_price > 0 else 0
+    
+    # 💡 V89 智能股利判斷系統
+    est_annual_dividend = est_full_year_eps * (calc_payout_ratio / 100)
+    
+    if declared_div > 0 and current_price > 0:
+        # 如果宣告股利不到預估全年的 45%，認定為「季配/半年配」
+        if declared_div < (est_annual_dividend * 0.45):
+            forward_yield = (est_annual_dividend / current_price) * 100
+            formula_note += " (多次配息，採預估EPS計算)"
+        else:
+            forward_yield = (declared_div / current_price) * 100
+            formula_note += " (採宣告股利計算)"
+    elif current_price > 0:
+        forward_yield = (est_annual_dividend / current_price) * 100
+    else:
+        forward_yield = 0
 
     return {
         "股票名稱": name, "最新股價": round(current_price, 2), "套用公式": formula_note,
@@ -89,7 +107,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     }
 
 # ==========================================
-# 2. 側邊欄：登入與自動記憶清單系統 (V88 升級)
+# 2. 側邊欄：登入與自動記憶清單系統
 # ==========================================
 st.sidebar.header("⚙️ 系統參數")
 simulated_month = st.sidebar.slider("月份推演", 1, 12, 2)
@@ -103,7 +121,6 @@ user_vip_list = ""
 user_row_idx = None
 sheet_auth = None
 
-# 讀取現有清單邏輯
 if gsheet_url and user_email and "google_key" in st.secrets:
     try:
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -117,7 +134,7 @@ if gsheet_url and user_email and "google_key" in st.secrets:
         for i, row in enumerate(auth_data):
             if str(row.get('Email', '')).strip().lower() == user_email.strip().lower():
                 user_vip_list = str(row.get('VIP清單', ''))
-                user_row_idx = i + 2 # +2 是因為索引從0開始，且加上標題列
+                user_row_idx = i + 2 
                 break
                 
         if user_row_idx:
@@ -128,34 +145,30 @@ if gsheet_url and user_email and "google_key" in st.secrets:
     except Exception as e:
         st.sidebar.error("❌ 連結失敗，請確認試算表有建立「權限管理」分頁。")
 
-# 讓使用者自由編輯清單
 watch_list_input = st.sidebar.text_area(
     "📌 您的專屬關注清單 (用空白或逗號隔開)", 
     value=user_vip_list if user_vip_list else "2330, 2317, 2382", 
     height=100
 )
 
-# 儲存按鈕邏輯
 if user_email and gsheet_url and "google_key" in st.secrets:
     if st.sidebar.button("💾 儲存 / 更新清單至雲端", type="secondary"):
         if sheet_auth:
             with st.spinner("正在將名單寫入雲端..."):
                 try:
                     if user_row_idx:
-                        # 已經有帳號，更新欄位 B
                         sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
                         st.sidebar.success("✅ 清單已成功更新！下次登入將自動讀取。")
                     else:
-                        # 新朋友，新增一列 [Email, 清單]
                         sheet_auth.append_row([user_email.strip(), watch_list_input])
                         st.sidebar.success("✅ 帳號建立成功！您的清單已永久儲存。")
                         time.sleep(1)
-                        st.rerun() # 重新整理網頁套用新狀態
+                        st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎一：月營收自動更新 (保留以供月底執行)
+# 🌟 引擎一：月營收自動更新 
 # ==========================================
 st.sidebar.divider()
 with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
@@ -268,7 +281,31 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                     st.error(f"❌ 錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎 (V87 防護對位法)
+# 🛠️ 管理員工具：自動生成 Goodinfo 純個股清單
+# ==========================================
+st.sidebar.divider()
+with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
+    st.info("此工具可一鍵提取全市場「純 4 碼公司代號」(排除 ETF/權證)，並切成每包 300 檔，方便您複製到 Goodinfo 查詢歷史財報。")
+    if st.button("打包純個股清單", type="secondary"):
+        with st.spinner("向政府資料庫請求最新名單中..."):
+            try:
+                res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
+                twse_codes = [item['Code'] for item in res_twse.json() if str(item['Code']).isdigit() and len(str(item['Code'])) == 4]
+                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
+                tpex_codes = [item['SecuritiesCompanyCode'] for item in res_tpex.json() if str(item['SecuritiesCompanyCode']).isdigit() and len(str(item['SecuritiesCompanyCode'])) == 4]
+                
+                all_pure_codes = sorted(list(set(twse_codes + tpex_codes)))
+                st.success(f"成功撈取 {len(all_pure_codes)} 檔純公司股票！")
+                
+                chunk_size = 300
+                chunks = [all_pure_codes[i:i + chunk_size] for i in range(0, len(all_pure_codes), chunk_size)]
+                for idx, chunk in enumerate(chunks):
+                    st.text_area(f"第 {idx+1} 包 (共 {len(chunk)} 檔)", value=",".join(chunk), height=100)
+            except Exception as e:
+                st.error(f"獲取名單失敗，請稍後再試。({e})")
+
+# ==========================================
+# 3. 讀取與解析引擎
 # ==========================================
 df_upload = None
 try:
@@ -291,7 +328,7 @@ try:
         y1 = str(int(ly) - 1) 
 
         def get_col(kw1, kw2="", excludes=[]):
-            for c in cols: # 由左至右！
+            for c in cols:
                 clean_c = str(c).replace('\n', '').replace(' ', '').replace('\r', '')
                 if kw1 in clean_c and kw2 in clean_c:
                     if any(ex in clean_c for ex in excludes): continue
@@ -325,6 +362,9 @@ try:
         c_non_op = get_col("業外損益")
         c_payout = get_col("分配率")
         
+        # 💡 V89: 抓取宣告股利欄位
+        c_dec_div = get_col("合計股利")
+        
         c_liab_qoq = get_col("合約負債季增")
         if not c_liab_qoq: c_liab_qoq = get_col("季增", "負債")
         c_liab = get_col("合約負債", excludes=["季增", "%", "比"])
@@ -352,23 +392,24 @@ try:
                 "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "acc_eps": get_val(c_acc_eps),
-                "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
+                "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
+                "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v88"] = stock_db
+        st.session_state["stock_db_v89"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v88" in st.session_state:
+if "stock_db_v89" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
             
             vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
             
-            for code, data in st.session_state["stock_db_v88"].items():
+            for code, data in st.session_state["stock_db_v89"].items():
                 if code not in vip_list_parsed:
                     continue
                 
@@ -389,19 +430,20 @@ if "stock_db_v88" in st.session_state:
                     y1_q1_rev=data["y1_q1_rev"], y1_q2_rev=data["y1_q2_rev"], y1_q3_rev=data["y1_q3_rev"], y1_q4_rev=data["y1_q4_rev"],
                     recent_payout_ratio=data["payout"], current_price=price, 
                     contract_liab=data.get("contract_liab", 0), contract_liab_qoq=data.get("contract_liab_qoq", 0),
-                    acc_eps=data.get("acc_eps", 0)
+                    acc_eps=data.get("acc_eps", 0),
+                    declared_div=data.get("declared_div", 0) # 傳入已宣告股利供智能判定
                 )
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
             if results:
-                st.session_state["df_final_v88"] = pd.DataFrame(results)
+                st.session_state["df_final_v89"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
             else:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
 
-if "df_final_v88" in st.session_state:
-    df = st.session_state["df_final_v88"].copy()
+if "df_final_v89" in st.session_state:
+    df = st.session_state["df_final_v89"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
