@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 import json
 import urllib3
 
-# 關閉 SSL 憑證警告
+# 關閉 SSL 憑證警告 (這就是用來配合 verify=False 的！)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V75 營收與季報雙引擎版)")
+st.title("📊 2026 戰略指揮 (V76 季報護盾補齊版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 引擎一：月營收自動更新 (V74 完美保留)
+# 🌟 引擎一：月營收自動更新 
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 月營收自動更新")
@@ -215,7 +215,7 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                 st.error(f"❌ 錯誤說明：{e}")
 
 # ==========================================
-# 🌟 引擎二：季報/財報自動更新 (V75 全新心血)
+# 🌟 引擎二：季報/財報自動更新 (修復 SSL 憑證阻擋問題)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("💼 季報/財報自動更新")
@@ -270,7 +270,7 @@ if st.sidebar.button("⚡ 一鍵更新季報至試算表", type="primary"):
                         try: return float(v)
                         except: return None
 
-                    st.write(f"2. 鑽探官方資料庫：解析上市與上櫃綜合損益總表...")
+                    st.write(f"2. 鑽探官方資料庫：強行突破安檢，解析綜合損益總表...")
                     # 抓取上市(sii)與上櫃(otc)
                     for typek in ['sii', 'otc']:
                         url = 'https://mops.twse.com.tw/mops/web/ajax_t163sb04'
@@ -278,7 +278,10 @@ if st.sidebar.button("⚡ 一鍵更新季報至試算表", type="primary"):
                             'encodeURIComponent': '1', 'step': '1', 'firstin': '1', 'off': '1',
                             'TYPEK': typek, 'year': str(roc_year), 'season': str(q_season).zfill(2)
                         }
-                        res = requests.post(url, data=payload, headers=headers_agent, timeout=15)
+                        
+                        # 💡 就在這一行！補上了 verify=False 護盾！
+                        res = requests.post(url, data=payload, headers=headers_agent, timeout=15, verify=False)
+                        
                         if res.status_code == 200 and len(res.text) > 500:
                             # 使用 pandas 強大的網頁表格解析功能
                             dfs = pd.read_html(io.StringIO(res.text))
@@ -353,7 +356,7 @@ if st.sidebar.button("⚡ 一鍵更新季報至試算表", type="primary"):
                 st.error(f"❌ 錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎 (略...與上方相同，負責顯示總表)
+# 3. 讀取與解析引擎 
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -429,18 +432,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v75"] = stock_db
+        st.session_state["stock_db_v76"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v75" in st.session_state:
+if "stock_db_v76" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v75"].items():
+            for code, data in st.session_state["stock_db_v76"].items():
                 
                 price = data["price"]
                 try: 
@@ -463,11 +466,11 @@ if "stock_db_v75" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v75"] = pd.DataFrame(results)
+            st.session_state["df_final_v76"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v75" in st.session_state:
-    df = st.session_state["df_final_v75"].copy()
+if "df_final_v76" in st.session_state:
+    df = st.session_state["df_final_v76"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
