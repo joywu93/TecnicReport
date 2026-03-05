@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V51 雙渦輪完美除錯版)")
+st.title("📊 2026 戰略指揮 (V52 鷹眼情報網版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V51 新增：雙渦輪情報引擎 (MoneyDJ + 政府後門)
+# 🌟 V52 新增：鷹眼視力解鎖 (識別 MoneyDJ 真實表頭)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -112,7 +112,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
     elif "google_key" not in st.secrets:
         st.sidebar.error("❌ 找不到鑰匙！請確認您已將鑰匙放入 Streamlit 的 Secrets 保險箱中。")
     else:
-        with st.status("啟動雙渦輪情報引擎：突破時間差，全網攔截中...", expanded=True) as status:
+        with st.status("啟動雙渦輪鷹眼引擎：暴力收割最新數據中...", expanded=True) as status:
             try:
                 st.write("1. 驗證雲端保險箱鑰匙...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -153,9 +153,9 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     df_all_list = []
                     headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                     
-                    st.write(f"3. 雙渦輪啟動！直搗民間情報網與政府後台...")
+                    st.write(f"3. 雙渦輪啟動！解除月份封印，直搗情報網...")
                     
-                    # 💡 渦輪一：MoneyDJ 搶先報 (純粹正規表達式暴力解析)
+                    # 💡 渦輪一：鷹眼 MoneyDJ 搶先報 (修復標題辨識盲點)
                     mdj_count = 0
                     for p in range(1, 6): # 掃描 MoneyDJ 最新 5 頁
                         try:
@@ -169,37 +169,30 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                                 parsed_data = []
                                 for r in rows:
                                     cols = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', r, flags=re.I|re.S)
-                                    clean_cols = [re.sub(r'<[^>]*>', '', c).replace(',', '').strip() for c in cols]
+                                    clean_cols = [re.sub(r'<[^>]*>', '', c).replace(',', '').replace('&nbsp;', '').strip() for c in cols]
                                     if clean_cols: parsed_data.append(clean_cols)
                                     
-                                c_idx, r_idx, m_idx = -1, -1, -1
+                                c_idx, r_idx = -1, -1
                                 for r_data in parsed_data[:15]:
                                     for i, c in enumerate(r_data):
-                                        if '公司' in c or '代碼' in c: c_idx = i
-                                        if '當月營收' in c: r_idx = i
-                                        if '月份' in c: m_idx = i
+                                        # 💡 鷹眼視力：認得「股票名稱」與「營收(千)」，且排除「累計」
+                                        if '股票' in c or '公司' in c or '代碼' in c: c_idx = i
+                                        if '營收' in c and ('千' in c or '當月' in c) and '累計' not in c: r_idx = i
                                     if c_idx != -1 and r_idx != -1: break
                                     
                                 if c_idx != -1 and r_idx != -1:
                                     for r_data in parsed_data[1:]:
                                         if len(r_data) > max(c_idx, r_idx):
-                                            # 嚴格的月份審查，防止抓到舊資料
-                                            if m_idx != -1 and len(r_data) > m_idx:
-                                                m_val = r_data[m_idx]
-                                                m_match = re.search(r'/(0?\d+)$', m_val)
-                                                if m_match:
-                                                    found_m = m_match.group(1).zfill(2)
-                                                    if found_m != target_m_header:
-                                                        continue # 月份不對，直接略過！
-                                                        
-                                            code = re.sub(r'\D', '', r_data[c_idx])
+                                            # 用正規表達式抓出 1256鮮活果汁-KY 裡面的 1256
+                                            code_match = re.search(r'\d{4}', r_data[c_idx])
                                             rev = r_data[r_idx]
-                                            if code and re.match(r'^-?[\d\.]+$', rev):
+                                            if code_match and re.match(r'^-?[\d\.]+$', rev):
+                                                code = code_match.group(0)
                                                 df_all_list.append(pd.DataFrame([{'公司代號': code, '當月營收': rev}]))
                                                 mdj_count += 1
                         except Exception: pass
                     
-                    st.write(f"✔️ 渦輪一 (MoneyDJ)：成功攔截 {mdj_count} 筆符合 {target_m_header} 月的熱騰騰名單！")
+                    st.write(f"✔️ 渦輪一 (MoneyDJ鷹眼)：成功收割 {mdj_count} 筆最新熱騰騰名單！")
                     
                     # 💡 渦輪二：政府 CSV 隱藏後門 (確保無漏網之魚)
                     url_dict = {
@@ -235,7 +228,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     st.write(f"✔️ 渦輪二 (政府 CSV)：成功過濾並攔截 {gov_count} 筆穩固名單！")
 
                     if not df_all_list:
-                        status.update(label=f"⚠️ 民間與政府情報網皆尚未發現 {target_m_header} 月營收", state="error", expanded=True)
+                        status.update(label=f"⚠️ 民間與政府情報網皆尚未發現營收公告", state="error", expanded=True)
                     else:
                         st.write("4. 統整過濾重複名單！開始換算「億元」...")
                         df_early = pd.concat(df_all_list, ignore_index=True)
@@ -285,7 +278,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 st.error(f"❌ 詳細錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎 (吸塵器 + 濾網保留 + 修復拼字錯誤)
+# 3. 讀取與解析引擎
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -353,7 +346,6 @@ try:
             base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
 
             stock_db[code] = {
-                # 💡 在這裡修復了 c_rev_last_11 變數的拼字錯誤！
                 "name": str(row[c_name]) if c_name else "未知", "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_rev_last_12),
                 "rev_this_1": get_val(c_rev_this_1), "rev_this_2": get_val(c_rev_this_2), "rev_this_3": get_val(c_rev_this_3),
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
@@ -361,18 +353,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v51"] = stock_db
+        st.session_state["stock_db_v52"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v51" in st.session_state:
+if "stock_db_v52" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v51"].items():
+            for code, data in st.session_state["stock_db_v52"].items():
                 
                 price = data["price"]
                 try: 
@@ -399,11 +391,11 @@ if "stock_db_v51" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v51"] = pd.DataFrame(results)
+            st.session_state["df_final_v52"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v51" in st.session_state:
-    df = st.session_state["df_final_v51"].copy()
+if "df_final_v52" in st.session_state:
+    df = st.session_state["df_final_v52"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
