@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import altair as alt
 import re
 import os
 import yfinance as yf
@@ -9,7 +10,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import json
 import urllib3
-import altair as alt
 
 # 關閉 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V74 純淨官方引擎版)")
+st.title("📊 2026 戰略指揮 (V75 營收與季報雙引擎版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,21 +100,18 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V74 刪除民間網站，純粹依賴官方數據
+# 🌟 引擎一：月營收自動更新 (V74 完美保留)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 月營收自動更新")
 auto_month = st.sidebar.text_input("設定欲更新的營收月份 (如: 01 或 02)", value="02")
 
 if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
-    if not gsheet_url:
-        st.sidebar.error("❌ 請先貼上您的 Google 試算表連結！")
-    elif "google_key" not in st.secrets:
-        st.sidebar.error("❌ 找不到金鑰！")
+    if not gsheet_url: st.sidebar.error("❌ 請先貼上您的 Google 試算表連結！")
+    elif "google_key" not in st.secrets: st.sidebar.error("❌ 找不到金鑰！")
     else:
         with st.status("啟動純淨官方引擎：鎖定台灣交易所數據...", expanded=True) as status:
             try:
-                st.write("1. 連結 Google 試算表...")
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
                 raw_key = st.secrets["google_key"]
                 key_dict = json.loads(raw_key) if isinstance(raw_key, str) else dict(raw_key)
@@ -137,17 +134,10 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                         elif "增" not in clean_h: target_col_idx = i + 1
                         
                 if target_col_idx == -1 or code_col_idx == -1:
-                    st.error(f"❌ 找不到包含「代號」或符合「{target_m_header}單月營收(主營收)」的標題！")
-                    status.update(label="任務失敗", state="error", expanded=True)
+                    status.update(label="任務失敗：找不到對應標題", state="error", expanded=True)
                 else:
-                    row_map = {}
-                    for i, row in enumerate(all_data):
-                        if i == 0: continue
-                        if len(row) >= code_col_idx:
-                            code = str(row[code_col_idx-1]).split('.')[0].strip()
-                            if code: row_map[code] = i + 1
-
-                    roc_year = 115 if int(auto_month) <= 12 else 114 # 2026年對應115年
+                    row_map = {str(row[code_col_idx-1]).split('.')[0].strip(): i + 1 for i, row in enumerate(all_data) if i > 0 and len(row) >= code_col_idx and str(row[code_col_idx-1]).strip()}
+                    roc_year = 115 if int(auto_month) <= 12 else 114 
                     query_m = str(int(auto_month))
                     df_all_list = []
                     headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -156,8 +146,7 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                         v = str(val).replace(',', '').replace('%', '').strip()
                         return v if re.match(r'^-?\d+(\.\d+)?$', v) else ""
 
-                    # 💡 只有官方：政府 HTML (即時更新用)
-                    st.write(f"2. 讀取官方即時公佈榜 (HTML)...")
+                    st.write(f"讀取官方即時公佈榜 (HTML)...")
                     gov_html_count = 0
                     gov_urls = [
                         f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
@@ -176,22 +165,14 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                                     clean_cols = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in cols]
                                     if len(clean_cols) >= 7:
                                         code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', clean_cols[0])
-                                        if code_match:
+                                        if code_match and clean_num(clean_cols[2]):
                                             code = code_match.group(1)
-                                            rev = clean_num(clean_cols[2])
-                                            if code in row_map and rev:
-                                                df_all_list.append({
-                                                    '公司代號': code, '當月營收': rev,
-                                                    '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]),
-                                                    '來源優先級': 2 
-                                                })
+                                            if code in row_map:
+                                                df_all_list.append({'公司代號': code, '當月營收': clean_num(clean_cols[2]), '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]), '來源優先級': 2})
                                                 gov_html_count += 1
-                        except Exception: pass
-                    st.write(f"✔️ HTML 攔截： {gov_html_count} 筆。")
-
-                    # 💡 只有官方：政府 CSV (10號後結算用)
-                    st.write(f"3. 讀取官方結算總表 (CSV)...")
-                    gov_csv_count = 0
+                        except: pass
+                    
+                    st.write(f"讀取官方結算總表 (CSV)...")
                     gov_csv_urls = [url.replace('.html', '.csv') for url in gov_urls]
                     for url in gov_csv_urls:
                         try:
@@ -199,12 +180,7 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                             if res.status_code == 200 and len(res.text) > 100:
                                 res.encoding = 'big5' 
                                 df_gov = pd.read_csv(io.StringIO(res.text), on_bad_lines='skip', header=None, dtype=str)
-                                header_idx = -1
-                                for i in range(min(10, len(df_gov))):
-                                    row_str = "".join([str(x) for x in df_gov.iloc[i]])
-                                    if '公司代號' in row_str and '當月營收' in row_str:
-                                        header_idx = i; break
-                                
+                                header_idx = next((i for i in range(min(10, len(df_gov))) if '公司代號' in "".join([str(x) for x in df_gov.iloc[i]]) and '當月營收' in "".join([str(x) for x in df_gov.iloc[i]])), -1)
                                 if header_idx != -1:
                                     df_gov.columns = [str(c).replace('\n', '').replace(' ', '').strip() for c in df_gov.iloc[header_idx]]
                                     df_gov = df_gov.iloc[header_idx+1:].reset_index(drop=True)
@@ -212,72 +188,172 @@ if st.sidebar.button("⚡ 一鍵更新營收至試算表", type="primary"):
                                         if '公司代號' in row and pd.notna(row['公司代號']):
                                             code = str(row['公司代號']).strip()
                                             if code in row_map: 
+                                                df_all_list.append({'公司代號': code, '當月營收': clean_num(row.get('當月營收', '')), '月增率': clean_num(row.get('上月比較增減(%)', '')), '年增率': clean_num(row.get('去年同月增減(%)', '')), '來源優先級': 1})
+                        except: pass
+
+                    if not df_all_list: status.update(label=f"⚠️ 目前官方尚未公佈 {auto_month} 月營收", state="error", expanded=True)
+                    else:
+                        df_early = pd.DataFrame(df_all_list).sort_values('來源優先級').drop_duplicates(subset=['公司代號'], keep='first') 
+                        cells_to_update = []
+                        for index, row in df_early.iterrows():
+                            row_idx = row_map[str(row['公司代號']).strip()]
+                            if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
+                            if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
+                            if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
+                        
+                        year_prefix = str(roc_year + 1911)[-2:] 
+                        new_header_prefix = f"{year_prefix}M{target_m_header}"
+                        if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{new_header_prefix}單月營收月增(%)"))
+                        if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{new_header_prefix}單月營收年增(%)"))
+
+                        if cells_to_update:
+                            sheet.update_cells(cells_to_update)
+                            status.update(label=f"🎉 營收更新成功！寫入 {len(df_early)} 檔數據！", state="complete", expanded=False)
+                            st.balloons()
+            except Exception as e:
+                status.update(label="任務中斷", state="error", expanded=True)
+                st.error(f"❌ 錯誤說明：{e}")
+
+# ==========================================
+# 🌟 引擎二：季報/財報自動更新 (V75 全新心血)
+# ==========================================
+st.sidebar.divider()
+st.sidebar.header("💼 季報/財報自動更新")
+q_year = st.sidebar.text_input("設定財報年份 (如: 25 代表 2025)", value="25")
+q_season = st.sidebar.selectbox("設定財報季度 (Q1~Q4)", ["1", "2", "3", "4"], index=2) # 預設 Q3
+
+if st.sidebar.button("⚡ 一鍵更新季報至試算表", type="primary"):
+    if not gsheet_url: st.sidebar.error("❌ 請先貼上您的 Google 試算表連結！")
+    elif "google_key" not in st.secrets: st.sidebar.error("❌ 找不到金鑰！")
+    else:
+        with st.status(f"啟動財報引擎：前往台灣交易所撈取 {q_year}年 Q{q_season} 綜合損益表...", expanded=True) as status:
+            try:
+                st.write("1. 連結 Google 試算表，定位財報欄位...")
+                scopes = ['https://www.googleapis.com/auth/spreadsheets']
+                raw_key = st.secrets["google_key"]
+                key_dict = json.loads(raw_key) if isinstance(raw_key, str) else dict(raw_key)
+                creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
+                client = gspread.authorize(creds)
+                
+                sheet = client.open_by_url(gsheet_url).sheet1
+                all_data = sheet.get_all_values()
+                headers = all_data[0]
+                
+                # 尋找目標欄位
+                c_code_idx = -1
+                c_gm_idx, c_om_idx, c_eps_idx = -1, -1, -1
+                
+                eps_header_target = f"{q_year}Q{q_season}單季每股盈餘(元)"
+                
+                for i, header in enumerate(headers):
+                    clean_h = str(header).replace('\n', '').replace(' ', '').replace('\r', '').strip()
+                    if "代號" in clean_h: c_code_idx = i + 1
+                    if "最新單季毛利率(%)" in clean_h: c_gm_idx = i + 1
+                    if "最新單季營益率(%)" in clean_h: c_om_idx = i + 1
+                    if eps_header_target in clean_h: c_eps_idx = i + 1
+                        
+                if c_code_idx == -1:
+                    st.error("❌ 找不到包含「代號」的標題！")
+                    status.update(label="任務失敗", state="error", expanded=True)
+                else:
+                    row_map = {str(row[c_code_idx-1]).split('.')[0].strip(): i + 1 for i, row in enumerate(all_data) if i > 0 and len(row) >= c_code_idx and str(row[c_code_idx-1]).strip()}
+                    
+                    # 財報年份轉換 (25 -> 2025 -> 114)
+                    roc_year = int(q_year) + 89 
+                    df_all_list = []
+                    headers_agent = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                    
+                    # 會計專用數字解析器：處理逗號與負數括號 (1,000) -> -1000
+                    def parse_acc_num(val):
+                        v = str(val).replace(',', '').strip()
+                        if v.startswith('(') and v.endswith(')'): v = '-' + v[1:-1]
+                        try: return float(v)
+                        except: return None
+
+                    st.write(f"2. 鑽探官方資料庫：解析上市與上櫃綜合損益總表...")
+                    # 抓取上市(sii)與上櫃(otc)
+                    for typek in ['sii', 'otc']:
+                        url = 'https://mops.twse.com.tw/mops/web/ajax_t163sb04'
+                        payload = {
+                            'encodeURIComponent': '1', 'step': '1', 'firstin': '1', 'off': '1',
+                            'TYPEK': typek, 'year': str(roc_year), 'season': str(q_season).zfill(2)
+                        }
+                        res = requests.post(url, data=payload, headers=headers_agent, timeout=15)
+                        if res.status_code == 200 and len(res.text) > 500:
+                            # 使用 pandas 強大的網頁表格解析功能
+                            dfs = pd.read_html(io.StringIO(res.text))
+                            for df in dfs:
+                                if len(df) > 5: # 確保這是一張真實的數據表
+                                    # 壓平複雜的雙層標題 (MultiIndex)
+                                    if isinstance(df.columns, pd.MultiIndex):
+                                        df.columns = ['_'.join(str(c) for c in col).strip() for col in df.columns.values]
+                                        
+                                    # 尋找關鍵會計欄位 (抓取第一個出現的，通常就是單季或當期)
+                                    col_code = next((c for c in df.columns if '公司代號' in c), None)
+                                    col_rev = next((c for c in df.columns if '營業收入' in c), None)
+                                    col_gp = next((c for c in df.columns if '營業毛利' in c), None)
+                                    col_op = next((c for c in df.columns if '營業利益' in c), None)
+                                    col_eps = next((c for c in df.columns if '每股盈餘' in c), None)
+                                    
+                                    if col_code and col_rev and col_gp and col_eps:
+                                        for idx, row in df.iterrows():
+                                            code = str(row[col_code]).split('.')[0].strip()
+                                            if code in row_map:
+                                                rev = parse_acc_num(row[col_rev])
+                                                gp = parse_acc_num(row[col_gp])
+                                                op = parse_acc_num(row[col_op]) if col_op else None
+                                                eps = parse_acc_num(row[col_eps])
+                                                
+                                                # 計算毛利率與營益率
+                                                gm_val = round((gp / rev) * 100, 2) if rev and rev != 0 and gp is not None else ""
+                                                om_val = round((op / rev) * 100, 2) if rev and rev != 0 and op is not None else ""
+                                                
                                                 df_all_list.append({
-                                                    '公司代號': code, 
-                                                    '當月營收': clean_num(row.get('當月營收', '')),
-                                                    '月增率': clean_num(row.get('上月比較增減(%)', '')),
-                                                    '年增率': clean_num(row.get('去年同月增減(%)', '')),
-                                                    '來源優先級': 1 
+                                                    '公司代號': code,
+                                                    '毛利率': gm_val,
+                                                    '營益率': om_val,
+                                                    'EPS': eps if eps is not None else ""
                                                 })
-                                                gov_csv_count += 1
-                        except Exception: pass
-                    st.write(f"✔️ CSV 攔截： {gov_csv_count} 筆。")
 
                     if not df_all_list:
-                        status.update(label=f"⚠️ 目前官方尚未公佈您指定的 {auto_month} 月營收", state="error", expanded=True)
+                        status.update(label=f"⚠️ 找不到 {q_year}Q{q_season} 的財報數據，可能官方尚未公佈或格式有變", state="error", expanded=True)
                     else:
-                        st.write("4. 統整寫入試算表...")
-                        df_early = pd.DataFrame(df_all_list)
-                        df_early = df_early.sort_values('來源優先級')
-                        df_early = df_early.drop_duplicates(subset=['公司代號'], keep='first') 
+                        st.write("3. 運算完成！開始發派數據至您的試算表...")
+                        df_res = pd.DataFrame(df_all_list).drop_duplicates(subset=['公司代號'], keep='first')
                         
                         cells_to_update = []
                         update_count = 0
                         
-                        for index, row in df_early.iterrows():
+                        for index, row in df_res.iterrows():
                             code = str(row['公司代號']).strip()
                             row_idx = row_map[code]
                             has_update = False
                             
-                            try:
-                                if row['當月營收'] != "":
-                                    revenue_100m = round(float(row['當月營收']) / 100000, 2)
-                                    cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=revenue_100m))
-                                    has_update = True
-                            except: pass
-                            
-                            try:
-                                if mom_col_idx != -1 and row['月增率'] != "":
-                                    cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
-                            except: pass
-                            
-                            try:
-                                if yoy_col_idx != -1 and row['年增率'] != "":
-                                    cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
-                            except: pass
-                            
+                            if c_gm_idx != -1 and row['毛利率'] != "":
+                                cells_to_update.append(gspread.Cell(row=row_idx, col=c_gm_idx, value=float(row['毛利率'])))
+                                has_update = True
+                            if c_om_idx != -1 and row['營益率'] != "":
+                                cells_to_update.append(gspread.Cell(row=row_idx, col=c_om_idx, value=float(row['營益率'])))
+                                has_update = True
+                            if c_eps_idx != -1 and row['EPS'] != "":
+                                cells_to_update.append(gspread.Cell(row=row_idx, col=c_eps_idx, value=float(row['EPS'])))
+                                has_update = True
+                                
                             if has_update: update_count += 1
-                        
-                        year_prefix = str(roc_year + 1911)[-2:] 
-                        new_header_prefix = f"{year_prefix}M{target_m_header}"
-                        if mom_col_idx != -1:
-                            cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{new_header_prefix}單月營收月增(%)"))
-                        if yoy_col_idx != -1:
-                            cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{new_header_prefix}單月營收年增(%)"))
 
                         if cells_to_update:
                             sheet.update_cells(cells_to_update)
-                            status.update(label=f"🎉 戰略大成功！完美為 {update_count} 檔 VIP 填滿官方數據！", state="complete", expanded=False)
+                            status.update(label=f"🎉 財報更新成功！已為 {update_count} 檔 VIP 填入毛利率、營益率與 EPS！", state="complete", expanded=False)
                             st.balloons()
                         else:
                             status.update(label="⚠️ 引擎有抓到資料，但您的清單中無人匹配", state="error", expanded=True)
-                        
+                            
             except Exception as e:
-                status.update(label="任務中斷 (請看下方紅字說明)", state="error", expanded=True)
-                st.error(f"❌ 詳細錯誤說明：{e}")
+                status.update(label="任務中斷", state="error", expanded=True)
+                st.error(f"❌ 錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎
+# 3. 讀取與解析引擎 (略...與上方相同，負責顯示總表)
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -353,18 +429,18 @@ try:
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v74"] = stock_db
+        st.session_state["stock_db_v75"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v74" in st.session_state:
+if "stock_db_v75" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v74"].items():
+            for code, data in st.session_state["stock_db_v75"].items():
                 
                 price = data["price"]
                 try: 
@@ -387,11 +463,11 @@ if "stock_db_v74" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v74"] = pd.DataFrame(results)
+            st.session_state["df_final_v75"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v74" in st.session_state:
-    df = st.session_state["df_final_v74"].copy()
+if "df_final_v75" in st.session_state:
+    df = st.session_state["df_final_v75"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
