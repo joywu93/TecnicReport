@@ -1,7 +1,9 @@
 streamlit
-gspread
-google-auth
 pandas
 yfinance
+requests
+gspread
+google-auth
+altair
 lxml
 html5lib
