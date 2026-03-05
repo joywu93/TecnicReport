@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V50 雙渦輪極速情報版)")
+st.title("📊 2026 戰略指揮 (V51 雙渦輪完美除錯版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -100,7 +100,7 @@ st.sidebar.header("📥 資料庫對接")
 gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (優先讀取)", placeholder="請貼上共用連結...")
 
 # ==========================================
-# 🌟 V50 新增：雙渦輪情報引擎 (MoneyDJ + 政府後門)
+# 🌟 V51 新增：雙渦輪情報引擎 (MoneyDJ + 政府後門)
 # ==========================================
 st.sidebar.divider()
 st.sidebar.header("🤖 終極武器：自動更新")
@@ -155,7 +155,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                     
                     st.write(f"3. 雙渦輪啟動！直搗民間情報網與政府後台...")
                     
-                    # 💡 渦輪一：MoneyDJ 搶先報 (無套件、純粹正規表達式暴力解析)
+                    # 💡 渦輪一：MoneyDJ 搶先報 (純粹正規表達式暴力解析)
                     mdj_count = 0
                     for p in range(1, 6): # 掃描 MoneyDJ 最新 5 頁
                         try:
@@ -285,7 +285,7 @@ if st.sidebar.button("⚡ 一鍵自動更新營收至試算表", type="primary")
                 st.error(f"❌ 詳細錯誤說明：{e}")
 
 # ==========================================
-# 3. 讀取與解析引擎 (吸塵器 + 濾網保留)
+# 3. 讀取與解析引擎 (吸塵器 + 濾網保留 + 修復拼字錯誤)
 # ==========================================
 default_file_path = None
 for f in ["MonthlyDataCSV.csv", "個股營收表.csv", "個股營收表.xlsx"]:
@@ -353,25 +353,26 @@ try:
             base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
 
             stock_db[code] = {
-                "name": str(row[c_name]) if c_name else "未知", "rev_last_11": get_val(c_last_11), "rev_last_12": get_val(c_rev_last_12),
+                # 💡 在這裡修復了 c_rev_last_11 變數的拼字錯誤！
+                "name": str(row[c_name]) if c_name else "未知", "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_rev_last_12),
                 "rev_this_1": get_val(c_rev_this_1), "rev_this_2": get_val(c_rev_this_2), "rev_this_3": get_val(c_rev_this_3),
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
                 "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
                 "y1_q1_rev": get_val(c_y1_q1), "y1_q2_rev": get_val(c_y1_q2), "y1_q3_rev": get_val(c_y1_q3), "y1_q4_rev": get_val(c_y1_q4),
                 "payout": get_val(c_payout), "price": get_val(c_price), "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq)
             }
-        st.session_state["stock_db_v50"] = stock_db
+        st.session_state["stock_db_v51"] = stock_db
 except Exception as e:
     if gsheet_url or uploaded_file or default_file_path: st.error(f"檔案解析失敗：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v50" in st.session_state:
+if "stock_db_v51" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月分析", type="primary"):
         with st.spinner("雲端運算中..."):
             results, current_rule_note = [], ""
-            for code, data in st.session_state["stock_db_v50"].items():
+            for code, data in st.session_state["stock_db_v51"].items():
                 
                 price = data["price"]
                 try: 
@@ -398,11 +399,11 @@ if "stock_db_v50" in st.session_state:
                 current_rule_note = res["套用公式"] 
                 results.append(res)
             
-            st.session_state["df_final_v50"] = pd.DataFrame(results)
+            st.session_state["df_final_v51"] = pd.DataFrame(results)
             st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v50" in st.session_state:
-    df = st.session_state["df_final_v50"].copy()
+if "df_final_v51" in st.session_state:
+    df = st.session_state["df_final_v51"].copy()
     watch_list = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
     if watch_list:
         df['is_vip'] = df['股票名稱'].apply(lambda x: 1 if any(w in str(x) for w in watch_list) else 0)
