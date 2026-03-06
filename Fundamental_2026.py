@@ -10,7 +10,6 @@ from google.oauth2.service_account import Credentials
 import json
 import urllib3
 import time
-import yfinance as yf
 
 # 關閉 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,22 +33,38 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V92 經典三柱排版版)")
+st.title("📊 2026 戰略指揮 (V93 智能報價視覺版)")
+
+# 💡 V93: 特務級直連報價函數 (速度更快、防封鎖)
+def fetch_realtime_price(code):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    for suffix in ['.TW', '.TWO']:
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{suffix}"
+            res = requests.get(url, headers=headers, timeout=3).json()
+            price = res['chart']['result'][0]['meta']['regularMarketPrice']
+            if price: return float(price)
+        except:
+            continue
+    return None
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
 # ==========================================
 def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
+    
+    # 💡 V93 智能實境系統：不管滑桿拉到哪，只要試算表裡有數字，就強制累加為「已公布」！
+    actual_known_q1 = sum([v for v in [rev_this_1, rev_this_2, rev_this_3] if v > 0])
+    
     if current_month == 1:
-        est_q1_avg, formula_note, known_q1 = (rev_last_11 + rev_last_12) / 2, "採上年11、12月均值", 0
+        est_q1_avg, formula_note = (rev_last_11 + rev_last_12) / 2, "採上年11、12月均值"
     elif current_month == 2:
-        est_q1_avg, formula_note, known_q1 = rev_this_1 * 0.9, "採當年1月營收×0.9", rev_this_1
+        est_q1_avg, formula_note = rev_this_1 * 0.9, "採當年1月營收×0.9"
     elif current_month == 3:
-        est_q1_avg = (rev_this_1 * 2 + rev_this_2) / 3
+        est_q1_avg = (rev_this_1 * 2 + rev_this_2) / 3 if rev_this_2 > 0 else rev_this_1
         formula_note = "採春節權重(1月x2+2月)/3"
-        known_q1 = rev_this_1 + rev_this_2
     else:
-        est_q1_avg, formula_note, known_q1 = (rev_this_1 + rev_this_2 + rev_this_3) / 3, "採當年Q1實際均值", rev_this_1 + rev_this_2 + rev_this_3
+        est_q1_avg, formula_note = (rev_this_1 + rev_this_2 + rev_this_3) / 3, "採當年Q1實際均值"
 
     est_q1_rev_total = est_q1_avg * 3
     q1_yoy = ((est_q1_rev_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
@@ -62,7 +77,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     y2_h1, y2_h2 = ly_q1_rev + ly_q2_rev, ly_q3_rev + ly_q4_rev
     avg_2yr_h1, avg_2yr_h2 = (y1_h1 + y2_h1) / 2, (y1_h2 + y2_h2) / 2
 
-    # 依歷年 Q3、Q4 佔比拆分下半年
     avg_2yr_q3 = (y1_q3_rev + ly_q3_rev) / 2
     avg_2yr_q4 = (y1_q4_rev + ly_q4_rev) / 2
     avg_2yr_h2_calc = avg_2yr_q3 + avg_2yr_q4
@@ -109,8 +123,9 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
         "預估今年度_EPS": round(est_full_year_eps, 2), "最新累季EPS": acc_eps, "本益比(PER)": round(est_per, 2),         
         "預估年成長率(%)": round(est_annual_yoy, 2), "運算配息率(%)": calc_payout_ratio,
         "最新季度流動合約負債(億)": contract_liab, "最新季度流動合約負債季增(%)": contract_liab_qoq,
-        "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev], "_known_qs": [known_q1, 0, 0, 0],
-        "_pure_est_qs": [max(0, est_q1_rev_total - known_q1), est_q2_rev_total, est_q3_rev_total, est_q4_rev_total]
+        "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev], "_known_qs": [actual_known_q1, 0, 0, 0],
+        # 動態相減，確保純預估不會產生負數
+        "_pure_est_qs": [max(0, est_q1_rev_total - actual_known_q1), est_q2_rev_total, est_q3_rev_total, est_q4_rev_total]
     }
 
 # ==========================================
@@ -296,6 +311,7 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
     if st.button("打包純個股清單", type="secondary"):
         with st.spinner("向政府資料庫請求最新名單中..."):
             try:
+                # 💡 裝上 verify=False 護盾，強行突破政府安檢！
                 res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10, verify=False)
                 twse_codes = [item['Code'] for item in res_twse.json() if str(item['Code']).isdigit() and len(str(item['Code'])) == 4]
                 
@@ -402,19 +418,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v92"] = stock_db
+        st.session_state["stock_db_v93"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v92" in st.session_state:
+if "stock_db_v93" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v92"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v93"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -422,17 +438,14 @@ if "stock_db_v92" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v92"][code]
+                data = st.session_state["stock_db_v93"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
+                # 💡 V93 核心修復：特務直連法，秒抓最新股價，永不限速！
                 price = data["price"]
-                try: 
-                    hist = yf.Ticker(f"{code}.TW").history(period="5d")
-                    if not hist.empty: price = float(hist['Close'].dropna().iloc[-1])
-                    else:
-                        hist_otc = yf.Ticker(f"{code}.TWO").history(period="5d")
-                        if not hist_otc.empty: price = float(hist_otc['Close'].dropna().iloc[-1])
-                except: pass 
+                rt_price = fetch_realtime_price(code)
+                if rt_price: 
+                    price = rt_price
                 
                 res = auto_strategic_model(
                     name=f"{code} {data['name']}", current_month=simulated_month,
@@ -451,11 +464,11 @@ if "stock_db_v92" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v92"] = pd.DataFrame(results)
+                st.session_state["df_final_v93"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v92" in st.session_state:
-    df = st.session_state["df_final_v92"].copy()
+if "df_final_v93" in st.session_state:
+    df = st.session_state["df_final_v93"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -466,7 +479,6 @@ if "df_final_v92" in st.session_state:
         liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
         liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
         
-        # 💡 V92: 根據您的要求重新排列特寫指標順序，加入 PER，並把 EPS 往後挪！
         st.markdown(
             f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
             f"殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ "
@@ -477,7 +489,6 @@ if "df_final_v92" in st.session_state:
         )
 
     with col2:
-        # 💡 V92: 回歸最直觀舒適的「三根柱子排排站」！
         chart_data = pd.DataFrame({
             "季度": ["Q1", "Q2", "Q3", "Q4"], 
             "1.去年實際": stock_row["_ly_qs"],
@@ -485,10 +496,13 @@ if "df_final_v92" in st.session_state:
             "3.今年純預估": stock_row["_pure_est_qs"]
         }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
         
+        # 💡 V93 視覺美學：三根柱子 + 質感同色系漸層 (深藍、中藍、淺藍)
         bars = alt.Chart(chart_data).mark_bar().encode(
             x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), 
-            color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top"), scale=alt.Scale(domain=["1.去年實際", "2.今年已公布", "3.今年純預估"], range=["#005b96", "#87CEFA", "#ff4b4b"])),
+            color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top"), 
+                            scale=alt.Scale(domain=["1.去年實際", "2.今年已公布", "3.今年純預估"], 
+                                            range=["#004c6d", "#428bca", "#90c2e7"])),
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
         ).properties(width=55, height=220)
         st.altair_chart(bars, use_container_width=False) 
