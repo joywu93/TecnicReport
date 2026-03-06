@@ -51,10 +51,10 @@ st.markdown("""
 # 1. 寫死網址：已為您專屬綁定！
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-# 2. 管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯與更新按鈕)
-ADMIN_EMAILS = ["joywu4093@gmail.com", "joywu93@gmail.com", "joywu93@kimo.com"]
+# 2. 💡 V107 嚴格限制：現在只有這個唯一信箱能看到管理員工具！
+ADMIN_EMAILS = ["joywu4093@gmail.com"]
 
-st.title("📊 2026 戰略指揮 (V106 專屬綁定穩定版)")
+st.title("📊 2026 戰略指揮 (V107 真實權限測試版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -504,19 +504,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v106"] = stock_db
+        st.session_state["stock_db_v107"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v106" in st.session_state:
+if "stock_db_v107" in st.session_state:
     if st.button(f"🚀 執行戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v106"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v107"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -524,7 +524,7 @@ if "stock_db_v106" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v106"][code]
+                data = st.session_state["stock_db_v107"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = get_realtime_price(code, data["price"])
@@ -545,10 +545,10 @@ if "stock_db_v106" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v106"] = pd.DataFrame(results)
+                st.session_state["df_final_v107"] = pd.DataFrame(results)
 
-if "df_final_v106" in st.session_state:
-    df = st.session_state["df_final_v106"].copy()
+if "df_final_v107" in st.session_state:
+    df = st.session_state["df_final_v107"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
