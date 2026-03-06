@@ -35,7 +35,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V98 完美圖表與表格修復版)")
+# 🚨🚨🚨 請在此處貼上您的 Google 試算表連結！🚨🚨🚨
+# V100 升級：寫死網址，使用者只要輸入 Email 即可！
+MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ"
+
+st.title("📊 2026 戰略指揮 (V100 商業旗艦版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -60,31 +64,29 @@ def get_realtime_price(code, default_price):
     return default_price
 
 # ==========================================
-# 1. 核心大腦：完美復刻 VBA (滾動式預測雙軌引擎)
+# 1. 核心大腦：完美復刻 VBA 
 # ==========================================
 def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
     
     actual_known_q1 = sum([v for v in [rev_this_1, rev_this_2, rev_this_3] if v > 0])
     
-    # 軌道一：【Q1 原始及格線】
     static_q1_avg = (rev_last_11 + rev_last_12) / 2
     static_q1_est_total = static_q1_avg * 3
     q1_yoy = ((static_q1_est_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
     est_q1_eps_display = base_q_eps * (1 - (non_op_ratio / 100)) * (static_q1_avg / base_q_avg_rev) if base_q_avg_rev > 0 else 0
 
-    # 軌道二：【未來滾動基準線】
     if current_month == 1:
         dynamic_base_avg = (rev_last_11 + rev_last_12) / 2
-        formula_note = "Q1基準=上年11,12月；Q2後採相同均值推算"
+        formula_note = "Q1基準=上年11,12月均值；Q2後採相同均值推算。"
     elif current_month == 2:
         dynamic_base_avg = rev_this_1 * 0.9
-        formula_note = "Q1基準=上年11,12月；Q2後採(1月×0.9)推算"
+        formula_note = "Q1基準=上年11,12月均值；Q2後採(1月×0.9)推算。"
     elif current_month == 3:
         dynamic_base_avg = (rev_this_1 * 2 + rev_this_2) / 3 if rev_this_2 > 0 else rev_this_1
-        formula_note = "Q1基準=上年11,12月；Q2後採(1月x2+2月)/3推算"
+        formula_note = "Q1基準=上年11,12月均值；Q2後採(1月x2+2月)/3推算。"
     else:
         dynamic_base_avg = (rev_this_1 + rev_this_2 + rev_this_3) / 3
-        formula_note = "Q1基準=上年11,12月；Q2後採Q1實際均值推算"
+        formula_note = "Q1基準=上年11,12月均值；Q2後採Q1實際均值推算。"
 
     est_q2_rev_total = dynamic_base_avg * 3
     dynamic_q1_total_for_calc = dynamic_base_avg * 3
@@ -119,23 +121,36 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     
     current_price = float(current_price) if current_price else 0.0
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
-    calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio == 0 else recent_payout_ratio)
     
+    # 💡 V100 將防呆備註與運算邏輯分開，方便 UI 排版
+    if recent_payout_ratio >= 100:
+        calc_payout_ratio = 90
+        payout_note = "(配息>100%，以90%計)"
+    elif recent_payout_ratio <= 0:
+        calc_payout_ratio = 50
+        payout_note = "(無配息資料，以50%計)"
+    else:
+        calc_payout_ratio = recent_payout_ratio
+        payout_note = ""
+        
     est_annual_dividend = est_full_year_eps * (calc_payout_ratio / 100)
+    
     if declared_div > 0 and current_price > 0:
         if declared_div < (est_annual_dividend * 0.45):
             forward_yield = (est_annual_dividend / current_price) * 100
-            formula_note += " (多次配息，採預估EPS計算)"
+            payout_note += "(多次配息，採預估EPS計算)"
         else:
             forward_yield = (declared_div / current_price) * 100
-            formula_note += " (採宣告股利計算)"
+            payout_note += "(採宣告股利計算)"
     elif current_price > 0:
         forward_yield = (est_annual_dividend / current_price) * 100
     else:
         forward_yield = 0
 
     return {
-        "股票名稱": name, "最新股價": round(current_price, 2), "套用公式": formula_note,
+        "股票名稱": name, "最新股價": round(current_price, 2), 
+        "logic_note": formula_note, # 隱藏用的長篇邏輯
+        "payout_note": payout_note, # 顯示用的防呆備註
         "當季預估均營收": round(dynamic_base_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps_display, 2), 
         "預估今年度_EPS": round(est_full_year_eps, 2), "最新累季EPS": acc_eps, "本益比(PER)": round(est_per, 2),         
@@ -155,22 +170,22 @@ current_real_month = datetime.now().month
 simulated_month = st.sidebar.slider("月份推演", 1, 12, current_real_month)
 
 st.sidebar.divider()
-st.sidebar.header("📥 資料庫對接與帳號")
-gsheet_url = st.sidebar.text_input("🔗 Google 試算表連結 (必填)", placeholder="請貼上共用連結...")
-user_email = st.sidebar.text_input("👤 Email 登入", placeholder="請輸入您的信箱...")
+st.sidebar.header("👤 帳號登入")
+# 💡 V100 移除網址輸入框，直接要求 Email！
+user_email = st.sidebar.text_input("請輸入您的 Email", placeholder="輸入信箱載入專屬清單...")
 
 user_vip_list = ""
 user_row_idx = None
 sheet_auth = None
 
-if gsheet_url and user_email and "google_key" in st.secrets:
+if MASTER_GSHEET_URL != "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ" and user_email and "google_key" in st.secrets:
     try:
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
         key_dict = json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"])
         creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        sheet_auth = client.open_by_url(gsheet_url).worksheet("權限管理")
+        sheet_auth = client.open_by_url(MASTER_GSHEET_URL).worksheet("權限管理")
         auth_data = sheet_auth.get_all_records()
         
         for i, row in enumerate(auth_data):
@@ -185,7 +200,7 @@ if gsheet_url and user_email and "google_key" in st.secrets:
             st.sidebar.info("👋 新朋友！輸入下方清單後按下儲存即可建立專屬帳號。")
             
     except Exception as e:
-        st.sidebar.error("❌ 連結失敗，請確認試算表有建立「權限管理」分頁。")
+        st.sidebar.error("❌ 連線失敗，請確認網址正確且有建立「權限管理」分頁。")
 
 watch_list_input = st.sidebar.text_area(
     "📌 您的專屬關注清單 (用空白或逗號隔開)", 
@@ -193,7 +208,7 @@ watch_list_input = st.sidebar.text_area(
     height=100
 )
 
-if user_email and gsheet_url and "google_key" in st.secrets:
+if user_email and "google_key" in st.secrets:
     if st.sidebar.button("💾 儲存 / 更新清單至雲端", type="secondary"):
         if sheet_auth:
             with st.spinner("正在將名單寫入雲端..."):
@@ -216,7 +231,8 @@ st.sidebar.divider()
 with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
     auto_month = st.text_input("設定欲更新的營收月份 (如: 01 或 02)", value=str(current_real_month).zfill(2))
     if st.button("⚡ 一鍵更新營收至試算表", type="primary"):
-        if not gsheet_url: st.error("❌ 請先貼上您的 Google 試算表連結！")
+        if MASTER_GSHEET_URL == "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ": 
+            st.error("❌ 請先在程式碼第 36 行綁定您的試算表網址！")
         elif "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
         else:
             with st.status("啟動多表掃描引擎：鎖定台灣交易所數據...", expanded=True) as status:
@@ -226,7 +242,7 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                     creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                     client = gspread.authorize(creds)
                     
-                    worksheets = client.open_by_url(gsheet_url).worksheets()
+                    worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
                     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
                     
                     if not target_sheets:
@@ -362,13 +378,13 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
 # ==========================================
 df_upload = None
 try:
-    if gsheet_url and "google_key" in st.secrets:
+    if MASTER_GSHEET_URL != "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ" and "google_key" in st.secrets:
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
         key_dict = json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"])
         creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        worksheets = client.open_by_url(gsheet_url).worksheets()
+        worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
         target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
         
         all_dfs = []
@@ -468,19 +484,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v98"] = stock_db
+        st.session_state["stock_db_v100"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v98" in st.session_state:
+if "stock_db_v100" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v98"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v100"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -488,7 +504,7 @@ if "stock_db_v98" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v98"][code]
+                data = st.session_state["stock_db_v100"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = get_realtime_price(code, data["price"])
@@ -504,35 +520,41 @@ if "stock_db_v98" in st.session_state:
                     acc_eps=data.get("acc_eps", 0),
                     declared_div=data.get("declared_div", 0) 
                 )
-                current_rule_note = res["套用公式"] 
                 results.append(res)
                 
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v98"] = pd.DataFrame(results)
-                st.session_state["current_rule_note"] = current_rule_note
+                st.session_state["df_final_v100"] = pd.DataFrame(results)
 
-if "df_final_v98" in st.session_state:
-    df = st.session_state["df_final_v98"].copy()
+if "df_final_v100" in st.session_state:
+    df = st.session_state["df_final_v100"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1動態推算；下半年採歷年Q3/Q4比例分配)", unsafe_allow_html=True)
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
         stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
         
         liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
         liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
         
+        # 💡 V100 乾淨版面，紅字精準提醒配息防呆
+        note_html = f"<span style='color: #ff4b4b; font-size: 0.9em; font-weight: bold;'>{stock_row['payout_note']}</span>" if stock_row['payout_note'] else ""
+        
         st.markdown(
             f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
-            f"殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ "
+            f"殖利率 **{stock_row['前瞻殖利率(%)']}%** {note_html}<br>"
             f"PER **{stock_row['本益比(PER)']}** ｜ "
             f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
             f"成長率 **{stock_row['預估年成長率(%)']}%** ｜ "
-            f"📈 合約負債 **{liab_value}億 ({liab_qoq}%)**"
+            f"📈 合約負債 **{liab_value}億 ({liab_qoq}%)**",
+            unsafe_allow_html=True
         )
+        
+        # 💡 V100 摺疊選單：讓想看公式的人點開才看，維持版面俐落
+        with st.expander("📝 點此查看系統底層預估邏輯"):
+            st.write(stock_row['logic_note'])
+            st.write("下半年：採歷年 Q3/Q4 比例分配推算")
 
     with col2:
         data_viz = []
@@ -568,16 +590,14 @@ if "df_final_v98" in st.session_state:
     
     st.divider()
     st.markdown(f"### 🎯 【{selected_stock}】 數據特寫 (免受下方大表排序影響)")
-    # 💡 V98 核心修復：加入 errors='ignore'，避免因欄位被移除而導致表格當機
-    mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "套用公式"], errors='ignore')
+    mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
     mini_df = mini_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     mini_df = mini_df.set_index(["股票名稱", "最新股價"])
     format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
     st.dataframe(mini_df.style.apply(lambda x: ['background-color: rgba(255, 235, 59, 0.2)']*len(x), axis=1).format(format_dict), use_container_width=True)
     
     st.markdown("### 🧮 個人專屬戰略數據總表 (💡 游標放在表內往下捲動，標題會自動凍結喔！)")
-    # 💡 V98 同步加入 errors='ignore' 防呆
-    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "套用公式"], errors='ignore')
+    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
     display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
     display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     display_df = display_df.set_index(["股票名稱", "最新股價"])
