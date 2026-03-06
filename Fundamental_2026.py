@@ -10,6 +10,8 @@ from google.oauth2.service_account import Credentials
 import json
 import urllib3
 import time
+import yfinance as yf
+from datetime import datetime
 
 # 關閉 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -33,9 +35,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V93 智能報價視覺版)")
+st.title("📊 2026 戰略指揮 (V94 多表掃描與漸層積木版)")
 
-# 💡 V93: 特務級直連報價函數 (速度更快、防封鎖)
+# 💡 V94: 特務級直連報價函數
 def fetch_realtime_price(code):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for suffix in ['.TW', '.TWO']:
@@ -53,7 +55,7 @@ def fetch_realtime_price(code):
 # ==========================================
 def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
     
-    # 💡 V93 智能實境系統：不管滑桿拉到哪，只要試算表裡有數字，就強制累加為「已公布」！
+    # 💡 絕對現實：確保圖表的已公布永遠抓取真實存在的數字，不受月份滑桿遮蔽
     actual_known_q1 = sum([v for v in [rev_this_1, rev_this_2, rev_this_3] if v > 0])
     
     if current_month == 1:
@@ -123,8 +125,9 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
         "預估今年度_EPS": round(est_full_year_eps, 2), "最新累季EPS": acc_eps, "本益比(PER)": round(est_per, 2),         
         "預估年成長率(%)": round(est_annual_yoy, 2), "運算配息率(%)": calc_payout_ratio,
         "最新季度流動合約負債(億)": contract_liab, "最新季度流動合約負債季增(%)": contract_liab_qoq,
-        "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev], "_known_qs": [actual_known_q1, 0, 0, 0],
-        # 動態相減，確保純預估不會產生負數
+        "_ly_qs": [ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev], 
+        "_known_qs": [actual_known_q1, 0, 0, 0],
+        "_known_q1_months": [max(0, rev_this_1), max(0, rev_this_2), max(0, rev_this_3)], # 傳出各月明細供積木圖使用
         "_pure_est_qs": [max(0, est_q1_rev_total - actual_known_q1), est_q2_rev_total, est_q3_rev_total, est_q4_rev_total]
     }
 
@@ -132,7 +135,9 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 # 2. 側邊欄：登入與自動記憶清單系統
 # ==========================================
 st.sidebar.header("⚙️ 系統參數")
-simulated_month = st.sidebar.slider("月份推演", 1, 12, 2)
+# 💡 V94 自動抓取現實當前月份，絕不誤會！
+current_real_month = datetime.now().month
+simulated_month = st.sidebar.slider("月份推演", 1, 12, current_real_month)
 
 st.sidebar.divider()
 st.sidebar.header("📥 資料庫對接與帳號")
@@ -190,41 +195,29 @@ if user_email and gsheet_url and "google_key" in st.secrets:
                     st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎一：月營收自動更新 
+# 🌟 引擎一：月營收自動更新 (V94 多表連動升級)
 # ==========================================
 st.sidebar.divider()
 with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
-    auto_month = st.text_input("設定欲更新的營收月份 (如: 01 或 02)", value="02")
+    auto_month = st.text_input("設定欲更新的營收月份 (如: 01 或 02)", value=str(current_real_month).zfill(2))
     if st.button("⚡ 一鍵更新營收至試算表", type="primary"):
         if not gsheet_url: st.error("❌ 請先貼上您的 Google 試算表連結！")
         elif "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
         else:
-            with st.status("啟動純淨官方引擎：鎖定台灣交易所數據...", expanded=True) as status:
+            with st.status("啟動多表掃描引擎：鎖定台灣交易所數據...", expanded=True) as status:
                 try:
                     scopes = ['https://www.googleapis.com/auth/spreadsheets']
                     key_dict = json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"])
                     creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
                     client = gspread.authorize(creds)
                     
-                    sheet = client.open_by_url(gsheet_url).worksheet("個股總表")
-                    all_data = sheet.get_all_values()
-                    headers = all_data[0]
+                    # 💡 掃描所有包含「個股總表」名稱的分頁
+                    worksheets = client.open_by_url(gsheet_url).worksheets()
+                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
                     
-                    target_col_idx, mom_col_idx, yoy_col_idx, code_col_idx = -1, -1, -1, -1
-                    target_m_header = auto_month.zfill(2) 
-                    
-                    for i, header in enumerate(headers):
-                        clean_h = str(header).replace('\n', '').replace(' ', '').replace('\r', '').strip()
-                        if "代號" in clean_h: code_col_idx = i + 1
-                        if target_m_header in clean_h and "單月營收" in clean_h:
-                            if "月增" in clean_h: mom_col_idx = i + 1
-                            elif "年增" in clean_h: yoy_col_idx = i + 1
-                            elif "增" not in clean_h: target_col_idx = i + 1
-                            
-                    if target_col_idx == -1 or code_col_idx == -1:
-                        status.update(label="任務失敗：找不到對應標題", state="error", expanded=True)
+                    if not target_sheets:
+                        status.update(label="任務失敗：找不到名為『個股總表』的分頁", state="error", expanded=True)
                     else:
-                        row_map = {str(row[code_col_idx-1]).split('.')[0].strip(): i + 1 for i, row in enumerate(all_data) if i > 0 and len(row) >= code_col_idx and str(row[code_col_idx-1]).strip()}
                         roc_year = 115 if int(auto_month) <= 12 else 114 
                         query_m = str(int(auto_month))
                         df_all_list = []
@@ -235,7 +228,6 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                             return v if re.match(r'^-?\d+(\.\d+)?$', v) else ""
 
                         st.write(f"讀取官方即時公佈榜 (HTML)...")
-                        gov_html_count = 0
                         gov_urls = [
                             f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html",
                             f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_1.html",
@@ -254,10 +246,7 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                                         if len(clean_cols) >= 7:
                                             code_match = re.search(r'(?<!\d)(\d{4})(?!\d)', clean_cols[0])
                                             if code_match and clean_num(clean_cols[2]):
-                                                code = code_match.group(1)
-                                                if code in row_map:
-                                                    df_all_list.append({'公司代號': code, '當月營收': clean_num(clean_cols[2]), '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]), '來源優先級': 2})
-                                                    gov_html_count += 1
+                                                df_all_list.append({'公司代號': code_match.group(1), '當月營收': clean_num(clean_cols[2]), '月增率': clean_num(clean_cols[5]), '年增率': clean_num(clean_cols[6]), '來源優先級': 2})
                             except: pass
                         
                         st.write(f"讀取官方結算總表 (CSV)...")
@@ -274,30 +263,58 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                                         df_gov = df_gov.iloc[header_idx+1:].reset_index(drop=True)
                                         for idx, row in df_gov.iterrows():
                                             if '公司代號' in row and pd.notna(row['公司代號']):
-                                                code = str(row['公司代號']).strip()
-                                                if code in row_map: 
-                                                    df_all_list.append({'公司代號': code, '當月營收': clean_num(row.get('當月營收', '')), '月增率': clean_num(row.get('上月比較增減(%)', '')), '年增率': clean_num(row.get('去年同月增減(%)', '')), '來源優先級': 1})
+                                                df_all_list.append({'公司代號': str(row['公司代號']).strip(), '當月營收': clean_num(row.get('當月營收', '')), '月增率': clean_num(row.get('上月比較增減(%)', '')), '年增率': clean_num(row.get('去年同月增減(%)', '')), '來源優先級': 1})
                             except: pass
 
-                        if not df_all_list: status.update(label=f"⚠️ 目前官方尚未公佈 {auto_month} 月營收", state="error", expanded=True)
+                        if not df_all_list: 
+                            status.update(label=f"⚠️ 目前官方尚未公佈 {auto_month} 月營收", state="error", expanded=True)
                         else:
                             df_early = pd.DataFrame(df_all_list).sort_values('來源優先級').drop_duplicates(subset=['公司代號'], keep='first') 
-                            cells_to_update = []
-                            for index, row in df_early.iterrows():
-                                row_idx = row_map[str(row['公司代號']).strip()]
-                                if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
-                                if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
-                                if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
+                            total_updated = 0
                             
+                            # 💡 逐一更新每個找到的分頁
+                            target_m_header = auto_month.zfill(2)
                             year_prefix = str(roc_year + 1911)[-2:] 
                             new_header_prefix = f"{year_prefix}M{target_m_header}"
-                            if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{new_header_prefix}單月營收月增(%)"))
-                            if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{new_header_prefix}單月營收年增(%)"))
 
-                            if cells_to_update:
-                                sheet.update_cells(cells_to_update)
-                                status.update(label=f"🎉 營收更新成功！寫入 {len(df_early)} 檔數據！", state="complete", expanded=False)
+                            for ws in target_sheets:
+                                all_data = ws.get_all_values()
+                                if not all_data: continue
+                                headers = all_data[0]
+                                
+                                target_col_idx, mom_col_idx, yoy_col_idx, code_col_idx = -1, -1, -1, -1
+                                for i, header in enumerate(headers):
+                                    clean_h = str(header).replace('\n', '').replace(' ', '').replace('\r', '').strip()
+                                    if "代號" in clean_h: code_col_idx = i + 1
+                                    if target_m_header in clean_h and "單月營收" in clean_h:
+                                        if "月增" in clean_h: mom_col_idx = i + 1
+                                        elif "年增" in clean_h: yoy_col_idx = i + 1
+                                        elif "增" not in clean_h: target_col_idx = i + 1
+                                
+                                if target_col_idx != -1 and code_col_idx != -1:
+                                    row_map = {str(row[code_col_idx-1]).split('.')[0].strip(): i + 1 for i, row in enumerate(all_data) if i > 0 and len(row) >= code_col_idx and str(row[code_col_idx-1]).strip()}
+                                    cells_to_update = []
+                                    
+                                    for index, row in df_early.iterrows():
+                                        code = str(row['公司代號']).strip()
+                                        if code in row_map:
+                                            row_idx = row_map[code]
+                                            if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
+                                            if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
+                                            if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
+                                    
+                                    if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{new_header_prefix}單月營收月增(%)"))
+                                    if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{new_header_prefix}單月營收年增(%)"))
+
+                                    if cells_to_update:
+                                        ws.update_cells(cells_to_update)
+                                        total_updated += 1
+                                        
+                            if total_updated > 0:
+                                status.update(label=f"🎉 營收更新成功！已寫入 {total_updated} 張分頁！", state="complete", expanded=False)
                                 st.balloons()
+                            else:
+                                status.update(label=f"⚠️ 無法對應股票或找不到營收欄位，請檢查分頁標題", state="error", expanded=True)
                 except Exception as e:
                     status.update(label="任務中斷", state="error", expanded=True)
                     st.error(f"❌ 錯誤說明：{e}")
@@ -311,7 +328,6 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
     if st.button("打包純個股清單", type="secondary"):
         with st.spinner("向政府資料庫請求最新名單中..."):
             try:
-                # 💡 裝上 verify=False 護盾，強行突破政府安檢！
                 res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10, verify=False)
                 twse_codes = [item['Code'] for item in res_twse.json() if str(item['Code']).isdigit() and len(str(item['Code'])) == 4]
                 
@@ -329,7 +345,7 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
                 st.error(f"獲取名單失敗，請稍後再試。({e})")
 
 # ==========================================
-# 3. 讀取與解析引擎 
+# 3. 讀取與解析引擎 (V94 支援掃描多張表)
 # ==========================================
 df_upload = None
 try:
@@ -339,11 +355,18 @@ try:
         creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        sheet_main = client.open_by_url(gsheet_url).worksheet("個股總表")
-        all_data = sheet_main.get_all_values()
+        # 💡 自動抓取所有叫「個股總表」的分頁合併
+        worksheets = client.open_by_url(gsheet_url).worksheets()
+        target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
         
-        if len(all_data) > 0:
-            df_upload = pd.DataFrame(all_data[1:], columns=all_data[0])
+        all_dfs = []
+        for ws in target_sheets:
+            all_data = ws.get_all_values()
+            if len(all_data) > 0:
+                all_dfs.append(pd.DataFrame(all_data[1:], columns=all_data[0]))
+                
+        if all_dfs:
+            df_upload = pd.concat(all_dfs, ignore_index=True)
 
     if df_upload is not None:
         cols = df_upload.columns.tolist()
@@ -418,19 +441,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v93"] = stock_db
+        st.session_state["stock_db_v94"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v93" in st.session_state:
+if "stock_db_v94" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v93"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v94"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -438,10 +461,9 @@ if "stock_db_v93" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v93"][code]
+                data = st.session_state["stock_db_v94"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
-                # 💡 V93 核心修復：特務直連法，秒抓最新股價，永不限速！
                 price = data["price"]
                 rt_price = fetch_realtime_price(code)
                 if rt_price: 
@@ -464,11 +486,11 @@ if "stock_db_v93" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v93"] = pd.DataFrame(results)
+                st.session_state["df_final_v94"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v93" in st.session_state:
-    df = st.session_state["df_final_v93"].copy()
+if "df_final_v94" in st.session_state:
+    df = st.session_state["df_final_v94"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -489,34 +511,48 @@ if "df_final_v93" in st.session_state:
         )
 
     with col2:
-        chart_data = pd.DataFrame({
-            "季度": ["Q1", "Q2", "Q3", "Q4"], 
-            "1.去年實際": stock_row["_ly_qs"],
-            "2.今年已公布": stock_row["_known_qs"], 
-            "3.今年純預估": stock_row["_pure_est_qs"]
-        }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
+        # 💡 V94: Q1 獨家「月份漸層堆疊」，積木式顯示今年已公布營收！
+        data_viz = []
+        for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
+            data_viz.append({"季度": q, "大類": "1.去年實際", "小項": "去年", "營收(億)": stock_row["_ly_qs"][i]})
+            
+            if q == "Q1":
+                m_revs = stock_row["_known_q1_months"]
+                if m_revs[0] > 0: data_viz.append({"季度": q, "大類": "2.今年已公布", "小項": "1月", "營收(億)": m_revs[0]})
+                if m_revs[1] > 0: data_viz.append({"季度": q, "大類": "2.今年已公布", "小項": "2月", "營收(億)": m_revs[1]})
+                if m_revs[2] > 0: data_viz.append({"季度": q, "大類": "2.今年已公布", "小項": "3月", "營收(億)": m_revs[2]})
+                if sum(m_revs) == 0: data_viz.append({"季度": q, "大類": "2.今年已公布", "小項": "已公布", "營收(億)": 0}) # 防呆
+                
+                data_viz.append({"季度": q, "大類": "3.今年純預估", "小項": "預估", "營收(億)": stock_row["_pure_est_qs"][0]})
+            else:
+                data_viz.append({"季度": q, "大類": "2.今年已公布", "小項": "已公布", "營收(億)": stock_row["_known_qs"][i]})
+                data_viz.append({"季度": q, "大類": "3.今年純預估", "小項": "預估", "營收(億)": stock_row["_pure_est_qs"][i]})
+                
+        chart_data = pd.DataFrame(data_viz)
         
-        # 💡 V93 視覺美學：三根柱子 + 質感同色系漸層 (深藍、中藍、淺藍)
         bars = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
+            x=alt.X('大類:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), 
-            color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top"), 
-                            scale=alt.Scale(domain=["1.去年實際", "2.今年已公布", "3.今年純預估"], 
-                                            range=["#004c6d", "#428bca", "#90c2e7"])),
+            color=alt.Color('小項:N', legend=alt.Legend(title=None, orient="top"), 
+                            scale=alt.Scale(
+                                domain=["去年", "1月", "2月", "3月", "已公布", "預估"], 
+                                range=["#004c6d", "#b3d4ff", "#66b2ff", "#0080ff", "#3399ff", "#ff4b4b"]
+                            )),
+            order=alt.Order('小項:N', sort='ascending'), # 確保 1月、2月、3月 按順序堆疊
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
         ).properties(width=55, height=220)
         st.altair_chart(bars, use_container_width=False) 
     
     st.divider()
     st.markdown(f"### 🎯 【{selected_stock}】 數據特寫 (免受下方大表排序影響)")
-    mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
+    mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "套用公式"])
     mini_df = mini_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     mini_df = mini_df.set_index(["股票名稱", "最新股價"])
     format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
     st.dataframe(mini_df.style.apply(lambda x: ['background-color: rgba(255, 235, 59, 0.2)']*len(x), axis=1).format(format_dict), use_container_width=True)
     
     st.markdown("### 🧮 個人專屬戰略數據總表 (💡 游標放在表內往下捲動，標題會自動凍結喔！)")
-    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
+    display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "套用公式"])
     display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
     display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     display_df = display_df.set_index(["股票名稱", "最新股價"])
