@@ -10,6 +10,7 @@ from google.oauth2.service_account import Credentials
 import json
 import urllib3
 import time
+import yfinance as yf
 
 # 關閉 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -33,7 +34,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V89 節氣與智能股利版)")
+st.title("📊 2026 戰略指揮 (V90 視覺累計與優化版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -44,7 +45,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     elif current_month == 2:
         est_q1_avg, formula_note, known_q1 = rev_this_1 * 0.9, "採當年1月營收×0.9", rev_this_1
     elif current_month == 3:
-        # 💡 V89 春節權重判讀：針對 2 月工作天較少，採 (1月x2 + 2月)/3
         est_q1_avg = (rev_this_1 * 2 + rev_this_2) / 3
         formula_note = "採春節權重(1月x2+2月)/3"
         known_q1 = rev_this_1 + rev_this_2
@@ -62,13 +62,24 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     y2_h1, y2_h2 = ly_q1_rev + ly_q2_rev, ly_q3_rev + ly_q4_rev
     avg_2yr_h1, avg_2yr_h2 = (y1_h1 + y2_h1) / 2, (y1_h2 + y2_h2) / 2
 
+    # 💡 V90：按照歷年 Q3、Q4 的佔比來精準預估下半年營收
+    avg_2yr_q3 = (y1_q3_rev + ly_q3_rev) / 2
+    avg_2yr_q4 = (y1_q4_rev + ly_q4_rev) / 2
+    avg_2yr_h2_calc = avg_2yr_q3 + avg_2yr_q4
+
     if avg_2yr_h1 > 0:
         multiplier = 1 + (avg_2yr_h2 / avg_2yr_h1)
         est_total_rev = est_h1_rev_total * multiplier
         est_full_year_eps = est_h1_eps * multiplier
         est_h2_rev_total = est_total_rev - est_h1_rev_total
-        est_q3_rev_total = est_h2_rev_total * (ly_q3_rev / y2_h2) if y2_h2 > 0 else est_h2_rev_total / 2
-        est_q4_rev_total = est_h2_rev_total * (ly_q4_rev / y2_h2) if y2_h2 > 0 else est_h2_rev_total / 2
+        
+        # 依歷史比例拆分 Q3 與 Q4
+        if avg_2yr_h2_calc > 0:
+            est_q3_rev_total = est_h2_rev_total * (avg_2yr_q3 / avg_2yr_h2_calc)
+            est_q4_rev_total = est_h2_rev_total * (avg_2yr_q4 / avg_2yr_h2_calc)
+        else:
+            est_q3_rev_total = est_h2_rev_total / 2
+            est_q4_rev_total = est_h2_rev_total / 2
     else:
         est_total_rev, est_full_year_eps, est_q3_rev_total, est_q4_rev_total = est_h1_rev_total, est_h1_eps, 0, 0
 
@@ -79,11 +90,8 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio == 0 else recent_payout_ratio)
     
-    # 💡 V89 智能股利判斷系統
     est_annual_dividend = est_full_year_eps * (calc_payout_ratio / 100)
-    
     if declared_div > 0 and current_price > 0:
-        # 如果宣告股利不到預估全年的 45%，認定為「季配/半年配」
         if declared_div < (est_annual_dividend * 0.45):
             forward_yield = (est_annual_dividend / current_price) * 100
             formula_note += " (多次配息，採預估EPS計算)"
@@ -362,7 +370,6 @@ try:
         c_non_op = get_col("業外損益")
         c_payout = get_col("分配率")
         
-        # 💡 V89: 抓取宣告股利欄位
         c_dec_div = get_col("合計股利")
         
         c_liab_qoq = get_col("合約負債季增")
@@ -395,23 +402,29 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v89"] = stock_db
+        st.session_state["stock_db_v90"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v89" in st.session_state:
+if "stock_db_v90" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
-        with st.spinner("雲端運算中..."):
-            results, current_rule_note = [], ""
+        results, current_rule_note = [], ""
+        
+        vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
+        valid_vips = [code for code in st.session_state["stock_db_v90"].keys() if code in vip_list_parsed]
+        
+        if not valid_vips:
+            st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
+        else:
+            # 💡 V90：加入超明顯的進度條，讓您知道股價正在更新
+            progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
-            vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-            
-            for code, data in st.session_state["stock_db_v89"].items():
-                if code not in vip_list_parsed:
-                    continue
+            for i, code in enumerate(valid_vips):
+                data = st.session_state["stock_db_v90"][code]
+                progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = data["price"]
                 try: 
@@ -431,23 +444,23 @@ if "stock_db_v89" in st.session_state:
                     recent_payout_ratio=data["payout"], current_price=price, 
                     contract_liab=data.get("contract_liab", 0), contract_liab_qoq=data.get("contract_liab_qoq", 0),
                     acc_eps=data.get("acc_eps", 0),
-                    declared_div=data.get("declared_div", 0) # 傳入已宣告股利供智能判定
+                    declared_div=data.get("declared_div", 0) 
                 )
                 current_rule_note = res["套用公式"] 
                 results.append(res)
+                
+            progress_bar.empty() # 跑完後隱藏進度條
             
             if results:
-                st.session_state["df_final_v89"] = pd.DataFrame(results)
+                st.session_state["df_final_v90"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
-            else:
-                st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
 
-if "df_final_v89" in st.session_state:
-    df = st.session_state["df_final_v89"].copy()
+if "df_final_v90" in st.session_state:
+    df = st.session_state["df_final_v90"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採H2/H1比例)", unsafe_allow_html=True)
+        st.markdown(f"⚙️ **預估邏輯：** {st.session_state['current_rule_note']}<br>(Q2=Q1保守推算；下半年採歷年H2/H1比例分配)", unsafe_allow_html=True)
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()))
         stock_row = df[df["股票名稱"] == selected_stock].iloc[0]
         
@@ -463,15 +476,23 @@ if "df_final_v89" in st.session_state:
         )
 
     with col2:
+        # 💡 V90：將今年已公布跟預估合併，視覺上更直觀！
         chart_data = pd.DataFrame({
-            "季度": ["Q1", "Q2", "Q3", "Q4"], "1.去年實際": stock_row["_ly_qs"],
-            "2.今年已公布": stock_row["_known_qs"], "3.今年純預估": stock_row["_pure_est_qs"]
+            "季度": ["Q1", "Q2", "Q3", "Q4"], 
+            "1.去年實際": stock_row["_ly_qs"],
+            "2.今年預估(含已公布)": [
+                stock_row["_known_qs"][0] + stock_row["_pure_est_qs"][0],
+                stock_row["_pure_est_qs"][1],
+                stock_row["_pure_est_qs"][2],
+                stock_row["_pure_est_qs"][3]
+            ]
         }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
+        
         bars = alt.Chart(chart_data).mark_bar().encode(
             x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top")),
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
-        ).properties(width=55, height=220)
+        ).properties(width=60, height=220)
         st.altair_chart(bars, use_container_width=False) 
     
     st.divider()
@@ -482,10 +503,10 @@ if "df_final_v89" in st.session_state:
     format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
     st.dataframe(mini_df.style.apply(lambda x: ['background-color: rgba(255, 235, 59, 0.2)']*len(x), axis=1).format(format_dict), use_container_width=True)
     
-    st.markdown("### 🧮 個人專屬戰略數據總表")
+    st.markdown("### 🧮 個人專屬戰略數據總表 (💡 游標放在表內往下捲動，標題會自動凍結喔！)")
     display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "套用公式"])
     display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
     display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
     display_df = display_df.set_index(["股票名稱", "最新股價"])
     def highlight_yield(val): return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 4.0 else ''
-    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=500, use_container_width=True)
+    st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=600, use_container_width=True)
