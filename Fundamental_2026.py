@@ -35,11 +35,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🚨🚨🚨 請在此處貼上您的 Google 試算表連結！🚨🚨🚨
-# V100 升級：寫死網址，使用者只要輸入 Email 即可！
+# 🚨🚨🚨 請在此處設定您的專屬參數 🚨🚨🚨
+# 1. 寫死網址，使用者只要輸入 Email 即可
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V100 商業旗艦版)")
+# 2. 💡 V101 新增：管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯)
+ADMIN_EMAILS = ["joywu4093@gmail.com", "joywu93@gmail.com", "joywu93@kimo.com"]
+
+st.title("📊 2026 戰略指揮 (V101 權限隱藏版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -64,17 +67,19 @@ def get_realtime_price(code, default_price):
     return default_price
 
 # ==========================================
-# 1. 核心大腦：完美復刻 VBA 
+# 1. 核心大腦：完美復刻 VBA (滾動式預測雙軌引擎)
 # ==========================================
 def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
     
     actual_known_q1 = sum([v for v in [rev_this_1, rev_this_2, rev_this_3] if v > 0])
     
+    # 軌道一：【Q1 原始及格線】
     static_q1_avg = (rev_last_11 + rev_last_12) / 2
     static_q1_est_total = static_q1_avg * 3
     q1_yoy = ((static_q1_est_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
     est_q1_eps_display = base_q_eps * (1 - (non_op_ratio / 100)) * (static_q1_avg / base_q_avg_rev) if base_q_avg_rev > 0 else 0
 
+    # 軌道二：【未來滾動基準線】
     if current_month == 1:
         dynamic_base_avg = (rev_last_11 + rev_last_12) / 2
         formula_note = "Q1基準=上年11,12月均值；Q2後採相同均值推算。"
@@ -122,7 +127,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     current_price = float(current_price) if current_price else 0.0
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     
-    # 💡 V100 將防呆備註與運算邏輯分開，方便 UI 排版
     if recent_payout_ratio >= 100:
         calc_payout_ratio = 90
         payout_note = "(配息>100%，以90%計)"
@@ -149,8 +153,8 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 
     return {
         "股票名稱": name, "最新股價": round(current_price, 2), 
-        "logic_note": formula_note, # 隱藏用的長篇邏輯
-        "payout_note": payout_note, # 顯示用的防呆備註
+        "logic_note": formula_note, 
+        "payout_note": payout_note, 
         "當季預估均營收": round(dynamic_base_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps_display, 2), 
         "預估今年度_EPS": round(est_full_year_eps, 2), "最新累季EPS": acc_eps, "本益比(PER)": round(est_per, 2),         
@@ -171,7 +175,6 @@ simulated_month = st.sidebar.slider("月份推演", 1, 12, current_real_month)
 
 st.sidebar.divider()
 st.sidebar.header("👤 帳號登入")
-# 💡 V100 移除網址輸入框，直接要求 Email！
 user_email = st.sidebar.text_input("請輸入您的 Email", placeholder="輸入信箱載入專屬清單...")
 
 user_vip_list = ""
@@ -348,30 +351,7 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                     status.update(label="任務中斷", state="error", expanded=True)
                     st.error(f"❌ 錯誤說明：{e}")
 
-# ==========================================
-# 🛠️ 管理員工具：自動生成 Goodinfo 純個股清單
-# ==========================================
-st.sidebar.divider()
-with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
-    st.info("此工具可一鍵提取全市場「純 4 碼公司代號」(排除 ETF/權證)，並切成每包 300 檔，方便您複製到 Goodinfo 查詢歷史財報。")
-    if st.button("打包純個股清單", type="secondary"):
-        with st.spinner("向政府資料庫請求最新名單中..."):
-            try:
-                res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10, verify=False)
-                twse_codes = [item['Code'] for item in res_twse.json() if str(item['Code']).isdigit() and len(str(item['Code'])) == 4]
-                
-                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10, verify=False)
-                tpex_codes = [item['SecuritiesCompanyCode'] for item in res_tpex.json() if str(item['SecuritiesCompanyCode']).isdigit() and len(str(item['SecuritiesCompanyCode'])) == 4]
-                
-                all_pure_codes = sorted(list(set(twse_codes + tpex_codes)))
-                st.success(f"成功撈取 {len(all_pure_codes)} 檔純公司股票！")
-                
-                chunk_size = 300
-                chunks = [all_pure_codes[i:i + chunk_size] for i in range(0, len(all_pure_codes), chunk_size)]
-                for idx, chunk in enumerate(chunks):
-                    st.text_area(f"第 {idx+1} 包 (共 {len(chunk)} 檔)", value=",".join(chunk), height=100)
-            except Exception as e:
-                st.error(f"獲取名單失敗，請稍後再試。({e})")
+# 💡 V101 已移除管理員 Goodinfo 輔助工具，保持版面極致簡潔
 
 # ==========================================
 # 3. 讀取與解析引擎 
@@ -484,19 +464,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v100"] = stock_db
+        st.session_state["stock_db_v101"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v100" in st.session_state:
+if "stock_db_v101" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v100"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v101"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -504,7 +484,7 @@ if "stock_db_v100" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v100"][code]
+                data = st.session_state["stock_db_v101"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = get_realtime_price(code, data["price"])
@@ -525,10 +505,10 @@ if "stock_db_v100" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v100"] = pd.DataFrame(results)
+                st.session_state["df_final_v101"] = pd.DataFrame(results)
 
-if "df_final_v100" in st.session_state:
-    df = st.session_state["df_final_v100"].copy()
+if "df_final_v101" in st.session_state:
+    df = st.session_state["df_final_v101"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -538,7 +518,6 @@ if "df_final_v100" in st.session_state:
         liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
         liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
         
-        # 💡 V100 乾淨版面，紅字精準提醒配息防呆
         note_html = f"<span style='color: #ff4b4b; font-size: 0.9em; font-weight: bold;'>{stock_row['payout_note']}</span>" if stock_row['payout_note'] else ""
         
         st.markdown(
@@ -551,10 +530,11 @@ if "df_final_v100" in st.session_state:
             unsafe_allow_html=True
         )
         
-        # 💡 V100 摺疊選單：讓想看公式的人點開才看，維持版面俐落
-        with st.expander("📝 點此查看系統底層預估邏輯"):
-            st.write(stock_row['logic_note'])
-            st.write("下半年：採歷年 Q3/Q4 比例分配推算")
+        # 💡 V101 權限控管：判斷目前登入的信箱是否為管理員
+        if user_email and user_email.strip().lower() in ADMIN_EMAILS:
+            with st.expander("📝 點此查看系統底層預估邏輯 (僅管理員可見)"):
+                st.write(stock_row['logic_note'])
+                st.write("下半年：採歷年 Q3/Q4 比例分配推算")
 
     with col2:
         data_viz = []
