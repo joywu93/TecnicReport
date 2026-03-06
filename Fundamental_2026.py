@@ -37,7 +37,7 @@ st.markdown("""
 
 # 🚨🚨🚨 請在此處設定您的專屬參數 🚨🚨🚨
 # 1. 寫死網址，使用者只要輸入 Email 即可
-MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ"
+MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
 # 2. 管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯)
 ADMIN_EMAILS = ["joywu4093@gmail.com", "joywu93@gmail.com", "joywu93@kimo.com"]
