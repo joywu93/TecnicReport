@@ -37,12 +37,12 @@ st.markdown("""
 
 # 🚨🚨🚨 請在此處設定您的專屬參數 🚨🚨🚨
 # 1. 寫死網址，使用者只要輸入 Email 即可
-MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
+MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ"
 
-# 2. 💡 V101 新增：管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯)
+# 2. 管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯)
 ADMIN_EMAILS = ["joywu4093@gmail.com", "joywu93@gmail.com", "joywu93@kimo.com"]
 
-st.title("📊 2026 戰略指揮 (V101 權限隱藏版)")
+st.title("📊 2026 戰略指揮 (V102 實戰服役版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -351,8 +351,6 @@ with st.sidebar.expander("🤖 月營收自動更新 (政府官方)"):
                     status.update(label="任務中斷", state="error", expanded=True)
                     st.error(f"❌ 錯誤說明：{e}")
 
-# 💡 V101 已移除管理員 Goodinfo 輔助工具，保持版面極致簡潔
-
 # ==========================================
 # 3. 讀取與解析引擎 
 # ==========================================
@@ -464,19 +462,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v101"] = stock_db
+        st.session_state["stock_db_v102"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v101" in st.session_state:
+if "stock_db_v102" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v101"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v102"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -484,7 +482,7 @@ if "stock_db_v101" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v101"][code]
+                data = st.session_state["stock_db_v102"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = get_realtime_price(code, data["price"])
@@ -505,10 +503,10 @@ if "stock_db_v101" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v101"] = pd.DataFrame(results)
+                st.session_state["df_final_v102"] = pd.DataFrame(results)
 
-if "df_final_v101" in st.session_state:
-    df = st.session_state["df_final_v101"].copy()
+if "df_final_v102" in st.session_state:
+    df = st.session_state["df_final_v102"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -520,9 +518,10 @@ if "df_final_v101" in st.session_state:
         
         note_html = f"<span style='color: #ff4b4b; font-size: 0.9em; font-weight: bold;'>{stock_row['payout_note']}</span>" if stock_row['payout_note'] else ""
         
+        # 💡 V102: 更新 UI 顯示為「前瞻殖利率」
         st.markdown(
             f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
-            f"殖利率 **{stock_row['前瞻殖利率(%)']}%** {note_html}<br>"
+            f"前瞻殖利率 **{stock_row['前瞻殖利率(%)']}%** {note_html}<br>"
             f"PER **{stock_row['本益比(PER)']}** ｜ "
             f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
             f"成長率 **{stock_row['預估年成長率(%)']}%** ｜ "
@@ -530,7 +529,6 @@ if "df_final_v101" in st.session_state:
             unsafe_allow_html=True
         )
         
-        # 💡 V101 權限控管：判斷目前登入的信箱是否為管理員
         if user_email and user_email.strip().lower() in ADMIN_EMAILS:
             with st.expander("📝 點此查看系統底層預估邏輯 (僅管理員可見)"):
                 st.write(stock_row['logic_note'])
