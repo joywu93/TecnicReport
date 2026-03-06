@@ -34,7 +34,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 2026 戰略指揮 (V91 視覺疊加防護版)")
+st.title("📊 2026 戰略指揮 (V92 經典三柱排版版)")
 
 # ==========================================
 # 1. 核心大腦：完美復刻 VBA 
@@ -296,7 +296,6 @@ with st.sidebar.expander("🛠️ 管理員輔助工具 (Goodinfo 專用)"):
     if st.button("打包純個股清單", type="secondary"):
         with st.spinner("向政府資料庫請求最新名單中..."):
             try:
-                # 💡 V91: 補上 verify=False 護盾，突破政府 SSL 阻擋
                 res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10, verify=False)
                 twse_codes = [item['Code'] for item in res_twse.json() if str(item['Code']).isdigit() and len(str(item['Code'])) == 4]
                 
@@ -403,19 +402,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v91"] = stock_db
+        st.session_state["stock_db_v92"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v91" in st.session_state:
+if "stock_db_v92" in st.session_state:
     if st.button(f"🚀 執行 {simulated_month} 月戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v91"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v92"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -423,7 +422,7 @@ if "stock_db_v91" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v91"][code]
+                data = st.session_state["stock_db_v92"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = data["price"]
@@ -452,11 +451,11 @@ if "stock_db_v91" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v91"] = pd.DataFrame(results)
+                st.session_state["df_final_v92"] = pd.DataFrame(results)
                 st.session_state["current_rule_note"] = current_rule_note
 
-if "df_final_v91" in st.session_state:
-    df = st.session_state["df_final_v91"].copy()
+if "df_final_v92" in st.session_state:
+    df = st.session_state["df_final_v92"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -467,26 +466,28 @@ if "df_final_v91" in st.session_state:
         liab_value = stock_row.get('最新季度流動合約負債(億)', 0)
         liab_qoq = stock_row.get('最新季度流動合約負債季增(%)', 0)
         
+        # 💡 V92: 根據您的要求重新排列特寫指標順序，加入 PER，並把 EPS 往後挪！
         st.markdown(
             f"**股價 {float(stock_row['最新股價']):.2f}元** ｜ "
-            f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
             f"殖利率 **{stock_row['前瞻殖利率(%)']}%** ｜ "
+            f"PER **{stock_row['本益比(PER)']}** ｜ "
+            f"EPS **{stock_row['預估今年度_EPS']}元** ｜ "
             f"成長率 **{stock_row['預估年成長率(%)']}%** ｜ "
             f"📈 合約負債 **{liab_value}億 ({liab_qoq}%)**"
         )
 
     with col2:
-        # 💡 V91：真正的「分層堆疊 + 雙邊對比圖」
-        data = []
-        for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
-            data.append({"季度": q, "年度": "去年", "營收類別": "1.去年實際", "營收(億)": stock_row["_ly_qs"][i]})
-            data.append({"季度": q, "年度": "今年", "營收類別": "2.今年已公布", "營收(億)": stock_row["_known_qs"][i]})
-            data.append({"季度": q, "年度": "今年", "營收類別": "3.今年純預估", "營收(億)": stock_row["_pure_est_qs"][i]})
-        chart_data = pd.DataFrame(data)
+        # 💡 V92: 回歸最直觀舒適的「三根柱子排排站」！
+        chart_data = pd.DataFrame({
+            "季度": ["Q1", "Q2", "Q3", "Q4"], 
+            "1.去年實際": stock_row["_ly_qs"],
+            "2.今年已公布": stock_row["_known_qs"], 
+            "3.今年純預估": stock_row["_pure_est_qs"]
+        }).melt(id_vars="季度", var_name="營收類別", value_name="營收(億)")
         
         bars = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X('年度:N', title=None, axis=alt.Axis(labels=True, ticks=False), sort=["去年", "今年"]),
-            y=alt.Y('營收(億):Q', title=None),
+            x=alt.X('營收類別:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
+            y=alt.Y('營收(億):Q', title=None), 
             color=alt.Color('營收類別:N', legend=alt.Legend(title=None, orient="top"), scale=alt.Scale(domain=["1.去年實際", "2.今年已公布", "3.今年純預估"], range=["#005b96", "#87CEFA", "#ff4b4b"])),
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
         ).properties(width=55, height=220)
