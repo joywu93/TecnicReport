@@ -37,7 +37,7 @@ st.markdown("""
 
 # 🚨🚨🚨 請在此處貼上您的 Google 試算表連結！🚨🚨🚨
 # V100 升級：寫死網址，使用者只要輸入 Email 即可！
-MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1X-請改成您真實的網址-XYZ"
+MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
 st.title("📊 2026 戰略指揮 (V100 商業旗艦版)")
 
