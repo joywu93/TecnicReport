@@ -46,9 +46,9 @@ st.markdown("""
 
 # 🚨🚨🚨 系統核心參數 🚨🚨🚨
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
-ADMIN_EMAILS = ["joywu4093@gmail.com"]
+# V118: 移除硬編碼的 ADMIN_EMAILS，改由 Google Sheet 內的「管理員」欄位動態判定
 
-st.title("📊 2026 戰略指揮 (V117 股價自動更新版)")
+st.title("📊 2026 戰略指揮 (V118 雲端權限升級版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -86,7 +86,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 
     actual_known_q1 = sum([v for v in [sim_rev_1, sim_rev_2, sim_rev_3] if v > 0])
     
-    # Q1 紅柱及格線計算 (去年11,12月均值 * 3)
     static_q1_avg = (rev_last_11 + rev_last_12) / 2
     static_q1_est_total = static_q1_avg * 3
     q1_yoy = ((static_q1_est_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
@@ -262,7 +261,7 @@ if stock_db_cached and "error" in stock_db_cached:
     stock_db_cached = None
 
 # ==========================================
-# 側邊欄：登入與自動記憶清單系統
+# 側邊欄：登入與動態權限判斷 (V118)
 # ==========================================
 st.sidebar.header("⚙️ 系統參數")
 current_real_month = datetime.now().month
@@ -272,10 +271,8 @@ st.sidebar.divider()
 st.sidebar.header("👤 帳號登入")
 user_email = st.sidebar.text_input("請輸入您的 Email", placeholder="輸入信箱載入專屬清單...")
 
-admin_list = [str(e).strip().lower() for e in ADMIN_EMAILS] if isinstance(ADMIN_EMAILS, list) else [str(e).strip().lower() for e in ADMIN_EMAILS.split(',')]
 current_user = user_email.strip().lower() if user_email else ""
-is_admin = (current_user != "") and (current_user in admin_list)
-
+is_admin = False # 預設都不是管理員
 user_vip_list, user_row_idx, sheet_auth = "", None, None
 
 if user_email and "google_key" in st.secrets:
@@ -285,13 +282,23 @@ if user_email and "google_key" in st.secrets:
         client = gspread.authorize(creds)
         sheet_auth = client.open_by_url(MASTER_GSHEET_URL).worksheet("權限管理")
         auth_data = sheet_auth.get_all_records()
+        
         for i, row in enumerate(auth_data):
             if str(row.get('Email', '')).strip().lower() == current_user:
-                user_vip_list, user_row_idx = str(row.get('VIP清單', '')), i + 2 
+                user_vip_list = str(row.get('VIP清單', ''))
+                user_row_idx = i + 2
+                # 💡 V118 雲端權限判定：只要「管理員」欄位填寫 是/可/Y/V，就會解鎖管理員功能！
+                admin_flag = str(row.get('管理員', '')).strip()
+                if admin_flag in ['是', '可', 'V', 'O', '1', 'true', 'yes', 'Y', 'y']:
+                    is_admin = True
                 break
-        if user_row_idx: st.sidebar.success(f"✅ 歡迎回來！已載入您的專屬清單。")
-        else: st.sidebar.info("👋 新朋友！輸入下方清單後按下儲存即可建立專屬帳號。")
-    except Exception as e: st.sidebar.error("❌ 連線失敗，請確認是否建立「權限管理」分頁。")
+                
+        if user_row_idx: 
+            st.sidebar.success(f"✅ 歡迎回來！已載入專屬清單。{' (👑 管理員權限已解鎖)' if is_admin else ''}")
+        else: 
+            st.sidebar.info("👋 新朋友！輸入下方清單後按下儲存即可建立專屬帳號。")
+            
+    except Exception as e: st.sidebar.error("❌ 連線失敗，請確認是否建立「權限管理」分頁，且標題包含『Email』與『管理員』。")
 
 watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單 (用空白或逗號隔開)", value=user_vip_list if user_vip_list else "2330, 2317, 2382", height=100)
 
@@ -301,7 +308,7 @@ if user_email and "google_key" in st.secrets:
             with st.spinner("正在將名單寫入雲端..."):
                 try:
                     if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
-                    else: sheet_auth.append_row([user_email.strip(), watch_list_input])
+                    else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) # 預設新用戶非管理員
                     st.sidebar.success("✅ 清單已成功更新！")
                     time.sleep(1)
                     st.rerun()
@@ -313,7 +320,6 @@ if user_email and "google_key" in st.secrets:
 if is_admin:
     st.sidebar.divider()
     
-    # --- 新增：全市場股價自動更新模組 ---
     with st.sidebar.expander("🤖 盤後股價自動更新 (官方資料)"):
         st.markdown("💡 每日盤後一鍵抓取證交所/櫃買中心最新收盤價，寫入所有個股總表的「成交」欄位。")
         if st.button("⚡ 一鍵更新全市場股價", type="primary", use_container_width=True):
@@ -377,7 +383,6 @@ if is_admin:
                         status.update(label="任務中斷", state="error", expanded=True)
                         st.error(f"❌ 錯誤說明：{e}")
 
-    # --- 原有：月營收自動更新模組 ---
     with st.sidebar.expander("🤖 月營收自動更新 (官方資料)"):
         now = datetime.now()
         lm_month, lm_year = now.month - 1, now.year
@@ -517,10 +522,10 @@ if stock_db_cached:
                     )
                     results.append(res)
                 progress_bar.empty() 
-                if results: st.session_state["df_final_v117"] = pd.DataFrame(results)
+                if results: st.session_state["df_final_v118"] = pd.DataFrame(results)
 
-        if "df_final_v117" in st.session_state:
-            df = st.session_state["df_final_v117"].copy()
+        if "df_final_v118" in st.session_state:
+            df = st.session_state["df_final_v118"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
@@ -602,7 +607,7 @@ if stock_db_cached:
             st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=600, use_container_width=True)
 
     # ----------------------------
-    # Tab 2: 全新戰略選股雷達 (V117)
+    # Tab 2: 全新戰略選股雷達 (V118)
     # ----------------------------
     if tab_radar is not None:
         with tab_radar:
@@ -632,6 +637,7 @@ if stock_db_cached:
 
             if st.button("📡 啟動全市場掃描", type="primary", use_container_width=True):
                 with st.spinner("快取引擎啟動，正在閃電掃描 1900 檔個股..."):
+                    
                     finance_kws = ["金控", "銀行", "壽險", "產險", "保險", "證券", "票券"]
                     construction_kws = ["建設", "營造", "地產", "開發", "工程"]
                     user_kws = [k.strip() for k in re.split(r'[;,\s\t]+', exclude_keywords) if k.strip()]
