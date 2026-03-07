@@ -48,7 +48,7 @@ st.markdown("""
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 ADMIN_EMAILS = ["joywu4093@gmail.com"]
 
-st.title("📊 2026 戰略指揮 (V114 雷達校準版)")
+st.title("📊 2026 戰略指揮 (V115 雷達動能引擎版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -242,7 +242,7 @@ def load_google_sheet_data():
             stock_db[code] = {
                 "name": str(row[c_name]) if c_name else "未知", 
                 "industry": str(row[c_industry]).strip() if c_industry and pd.notna(row[c_industry]) else "未分類",
-                "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_last_12) if 'c_last_12' in locals() else get_val(c_rev_last_12),
+                "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_rev_last_12),
                 "rev_this_1": get_val(c_rev_this_1), "rev_this_2": get_val(c_rev_this_2), "rev_this_3": get_val(c_rev_this_3),
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
                 "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
@@ -449,10 +449,10 @@ if stock_db_cached:
                     )
                     results.append(res)
                 progress_bar.empty() 
-                if results: st.session_state["df_final_v114"] = pd.DataFrame(results)
+                if results: st.session_state["df_final_v115"] = pd.DataFrame(results)
 
-        if "df_final_v114" in st.session_state:
-            df = st.session_state["df_final_v114"].copy()
+        if "df_final_v115" in st.session_state:
+            df = st.session_state["df_final_v115"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
@@ -534,18 +534,25 @@ if stock_db_cached:
             st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=600, use_container_width=True)
 
     # ----------------------------
-    # Tab 2: 全新戰略選股雷達 (僅管理員可用)
+    # Tab 2: 全新戰略選股雷達 (V115 成長動能三引擎版)
     # ----------------------------
     if tab_radar is not None:
         with tab_radar:
-            st.markdown("💡 *註：請確保 Google 試算表中的「成交」欄位有最新股價，否則會因股價為0被系統濾除。*")
+            st.markdown("💡 *註：雷達統一採用「Google試算表中之股價」進行盤後初篩。*")
             
+            # 💡 V115: 您專屬的 3 大成長動能濾網
+            st.markdown("##### 🚀 成長動能條件 (符合當年度爆發潛力)")
+            filter_strat_1 = st.checkbox("☑️ 策略一：年底升溫 (去年11,12月均值 > 去年Q1均值)", value=False)
+            filter_strat_2 = st.checkbox("☑️ 策略二：淡季突破 (動態預估今年Q1 > 去年Q2)", value=False)
+            filter_strat_3 = st.checkbox("☑️ 策略三：Q2大爆發 (預估今年Q2 > 預估Q1 及 > 去年Q2)", value=False)
+            
+            st.markdown("---")
+            st.markdown("##### 🛡️ 財務與護城河過濾")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
-                filter_momentum = st.checkbox("☑️ 動能突破 (動態預估Q1 > 去年Q2)", value=False)
-                filter_growth = st.checkbox("☑️ 成長股濾網 (預估年成長 >= 10%)", value=False)
+                filter_growth = st.checkbox("☑️ 穩健成長 (預估年成長率 >= 10%)", value=False)
             with col_r2:
-                filter_yield = st.selectbox("☑️ 高殖利率護體", ["無限制", "大於 4%", "大於 5%", "大於 6%"])
+                filter_yield = st.selectbox("☑️ 殖利率護體", ["無限制", "大於 4%", "大於 5%", "大於 6%"])
                 filter_per = st.slider("☑️ 便宜價過濾 (本益比小於)", 5, 50, 50)
                 
             st.markdown("##### 🚫 產業與特定個股排除")
@@ -571,11 +578,7 @@ if stock_db_cached:
                     for code, data in stock_db_cached.items():
                         stock_name = data["name"]
                         if exclude_finance and any(k in stock_name for k in finance_kws): continue
-                        
-                        # 💡 V114 強化：營建股自動排除 25 或 55 開頭的代號！
-                        if exclude_construction and (any(k in stock_name for k in construction_kws) or str(code).startswith('25') or str(code).startswith('55')): 
-                            continue
-                            
+                        if exclude_construction and (any(k in stock_name for k in construction_kws) or str(code).startswith('25') or str(code).startswith('55')): continue
                         if user_kws and any((k in stock_name or str(code).startswith(k)) for k in user_kws): continue
                         
                         res = auto_strategic_model(
@@ -589,9 +592,19 @@ if stock_db_cached:
                             acc_eps=data.get("acc_eps", 0), declared_div=data.get("declared_div", 0) 
                         )
                         
-                        # 💡 V114 修正：改用動態當季預估均營收，並放寬邊界條件
-                        dynamic_q1_est = res["當季預估均營收"] * 3
-                        if filter_momentum and dynamic_q1_est <= res["_ly_qs"][1]: continue
+                        # 💡 V115 雷達大腦：嚴格執行您制定的 3 大戰略
+                        ly_q1_avg = res["_ly_qs"][0] / 3
+                        ly_11_12_avg = res["_total_est_qs"][0] / 3
+                        est_q1_dynamic = res["當季預估均營收"] * 3
+                        ly_q2 = res["_ly_qs"][1]
+                        est_q1_static = res["_total_est_qs"][0]
+                        est_q2 = res["_total_est_qs"][1]
+
+                        if filter_strat_1 and not (ly_11_12_avg > ly_q1_avg): continue
+                        if filter_strat_2 and not (est_q1_dynamic > ly_q2): continue
+                        if filter_strat_3 and not (est_q2 > est_q1_static and est_q2 > ly_q2): continue
+                        
+                        # 其他財務過濾 (放寬為 >= 避免小數點錯殺)
                         if filter_growth and res["預估年成長率(%)"] < 10.0: continue
                         if yield_threshold > 0 and res["前瞻殖利率(%)"] < yield_threshold: continue
                         if filter_per < 50 and (res["本益比(PER)"] <= 0 or res["本益比(PER)"] > filter_per): continue
