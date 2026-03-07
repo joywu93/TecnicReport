@@ -48,7 +48,7 @@ st.markdown("""
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 ADMIN_EMAILS = ["joywu4093@gmail.com"]
 
-st.title("📊 2026 戰略指揮 (V116 自由滑桿過濾版)")
+st.title("📊 2026 戰略指揮 (V117 股價自動更新版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -86,7 +86,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 
     actual_known_q1 = sum([v for v in [sim_rev_1, sim_rev_2, sim_rev_3] if v > 0])
     
-    # 💡 這裡就是計算 Q1 預估標竿(紅柱) 的地方
+    # Q1 紅柱及格線計算 (去年11,12月均值 * 3)
     static_q1_avg = (rev_last_11 + rev_last_12) / 2
     static_q1_est_total = static_q1_avg * 3
     q1_yoy = ((static_q1_est_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
@@ -308,11 +308,77 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎一：月營收自動更新 (僅管理員)
+# 🌟 引擎一：月營收與股價自動更新 (僅管理員)
 # ==========================================
 if is_admin:
     st.sidebar.divider()
-    with st.sidebar.expander("🤖 月營收自動更新 (僅管理員可用)"):
+    
+    # --- 新增：全市場股價自動更新模組 ---
+    with st.sidebar.expander("🤖 盤後股價自動更新 (官方資料)"):
+        st.markdown("💡 每日盤後一鍵抓取證交所/櫃買中心最新收盤價，寫入所有個股總表的「成交」欄位。")
+        if st.button("⚡ 一鍵更新全市場股價", type="primary", use_container_width=True):
+            if "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
+            else:
+                with st.status("連線官方伺服器撈取今日全市場收盤價...", expanded=True) as status:
+                    try:
+                        headers_agent = {'User-Agent': 'Mozilla/5.0'}
+                        st.write("讀取證交所(上市)資料...")
+                        res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers_agent, verify=False, timeout=10).json()
+                        st.write("讀取櫃買中心(上櫃)資料...")
+                        res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers_agent, verify=False, timeout=10).json()
+                        
+                        price_dict = {}
+                        for item in res_twse:
+                            if item.get('ClosingPrice'):
+                                try: price_dict[str(item.get('Code', '')).strip()] = float(item.get('ClosingPrice').replace(',', ''))
+                                except: pass
+                        for item in res_tpex:
+                            if item.get('Close'):
+                                try: price_dict[str(item.get('SecuritiesCompanyCode', '')).strip()] = float(item.get('Close').replace(',', ''))
+                                except: pass
+                        
+                        if not price_dict:
+                            status.update(label="⚠️ 無法取得報價，可能是非交易日或伺服器維護中。", state="error", expanded=True)
+                        else:
+                            scopes = ['https://www.googleapis.com/auth/spreadsheets']
+                            creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
+                            client = gspread.authorize(creds)
+                            worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
+                            target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
+                            
+                            total_price_updated = 0
+                            for ws in target_sheets:
+                                all_data = ws.get_all_values()
+                                if not all_data: continue
+                                headers = all_data[0]
+                                code_col_idx, price_col_idx = -1, -1
+                                for i, h in enumerate(headers):
+                                    clean_h = str(h).replace('\n', '').replace(' ', '').strip()
+                                    if "代號" in clean_h: code_col_idx = i + 1
+                                    elif "成交" in clean_h and not any(ex in clean_h for ex in ["量", "值", "比", "額", "金", "幅", "差", "均"]): 
+                                        price_col_idx = i + 1
+                                
+                                if code_col_idx != -1 and price_col_idx != -1:
+                                    cells_to_update = []
+                                    for row_i, row in enumerate(all_data):
+                                        if row_i == 0: continue
+                                        code = str(row[code_col_idx-1]).split('.')[0].strip()
+                                        if code in price_dict:
+                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=price_col_idx, value=price_dict[code]))
+                                    
+                                    if cells_to_update:
+                                        ws.update_cells(cells_to_update)
+                                        total_price_updated += len(cells_to_update)
+                                        
+                            status.update(label=f"🎉 股價更新成功！共更新 {total_price_updated} 檔股票！", state="complete", expanded=False)
+                            st.cache_data.clear() # 清除快取以載入最新股價
+                            st.balloons()
+                    except Exception as e:
+                        status.update(label="任務中斷", state="error", expanded=True)
+                        st.error(f"❌ 錯誤說明：{e}")
+
+    # --- 原有：月營收自動更新模組 ---
+    with st.sidebar.expander("🤖 月營收自動更新 (官方資料)"):
         now = datetime.now()
         lm_month, lm_year = now.month - 1, now.year
         if lm_month == 0: lm_month, lm_year = 12, lm_year - 1
@@ -451,10 +517,10 @@ if stock_db_cached:
                     )
                     results.append(res)
                 progress_bar.empty() 
-                if results: st.session_state["df_final_v116"] = pd.DataFrame(results)
+                if results: st.session_state["df_final_v117"] = pd.DataFrame(results)
 
-        if "df_final_v116" in st.session_state:
-            df = st.session_state["df_final_v116"].copy()
+        if "df_final_v117" in st.session_state:
+            df = st.session_state["df_final_v117"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
@@ -536,11 +602,11 @@ if stock_db_cached:
             st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=600, use_container_width=True)
 
     # ----------------------------
-    # Tab 2: 全新戰略選股雷達 (V116 自由滑桿過濾版)
+    # Tab 2: 全新戰略選股雷達 (V117)
     # ----------------------------
     if tab_radar is not None:
         with tab_radar:
-            st.markdown("💡 *註：雷達統一採用「Google試算表中之股價」進行盤後初篩。*")
+            st.markdown("💡 *註：雷達統一採用「Google試算表中之股價」進行盤後初篩。您可於左側選單執行【全市場股價自動更新】。*")
             
             st.markdown("##### 🚀 成長動能條件 (符合當年度爆發潛力)")
             filter_strat_1 = st.checkbox("☑️ 策略一：年底升溫 (去年11,12月均值 > 去年Q1均值)", value=False)
@@ -551,11 +617,9 @@ if stock_db_cached:
             st.markdown("##### 🛡️ 財務與護城河過濾")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
-                # 💡 V116 自由滑桿：改為自由調整成長率 (預設10%)
                 filter_growth = st.slider("☑️ 穩健成長過濾 (年增率大於 %)", -10, 100, 10, step=5)
                 filter_per = st.slider("☑️ 便宜價過濾 (本益比小於)", 5, 50, 50)
             with col_r2:
-                # 💡 V116 自由滑桿：改為自由調整殖利率 (預設4.0%，調到0即不限制)
                 filter_yield = st.slider("☑️ 高殖利率護體 (大於 %)", 0.0, 15.0, 4.0, step=0.5)
                 
             st.markdown("##### 🚫 產業與特定個股排除")
@@ -568,7 +632,6 @@ if stock_db_cached:
 
             if st.button("📡 啟動全市場掃描", type="primary", use_container_width=True):
                 with st.spinner("快取引擎啟動，正在閃電掃描 1900 檔個股..."):
-                    
                     finance_kws = ["金控", "銀行", "壽險", "產險", "保險", "證券", "票券"]
                     construction_kws = ["建設", "營造", "地產", "開發", "工程"]
                     user_kws = [k.strip() for k in re.split(r'[;,\s\t]+', exclude_keywords) if k.strip()]
@@ -602,7 +665,6 @@ if stock_db_cached:
                         if filter_strat_2 and not (est_q1_dynamic > ly_q2): continue
                         if filter_strat_3 and not (est_q2 > est_q1_static and est_q2 > ly_q2): continue
                         
-                        # 💡 V116 滑桿濾網過濾器
                         if res["預估年成長率(%)"] < filter_growth: continue
                         if filter_yield > 0 and res["前瞻殖利率(%)"] < filter_yield: continue
                         if filter_per < 50 and (res["本益比(PER)"] <= 0 or res["本益比(PER)"] > filter_per): continue
