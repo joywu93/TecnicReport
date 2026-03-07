@@ -54,7 +54,7 @@ MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMM
 # 2. 管理員信箱清單 (只有這些信箱登入，才能看到底層邏輯與更新按鈕)
 ADMIN_EMAILS = ["joywu4093@gmail.com"]
 
-st.title("📊 2026 戰略指揮 (V108 極致純淨版)")
+st.title("📊 2026 戰略指揮 (V109 十字凍結版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -504,19 +504,19 @@ try:
                 "contract_liab": get_val(c_liab), "contract_liab_qoq": get_val(c_liab_qoq),
                 "declared_div": get_val(c_dec_div)
             }
-        st.session_state["stock_db_v108"] = stock_db
+        st.session_state["stock_db_v109"] = stock_db
 except Exception as e:
     st.error(f"檔案解析失敗，請確認連結與權限。詳細錯誤訊息：{e}")
 
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-if "stock_db_v108" in st.session_state:
+if "stock_db_v109" in st.session_state:
     if st.button(f"🚀 執行戰略分析", type="primary"):
         results, current_rule_note = [], ""
         
         vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-        valid_vips = [code for code in st.session_state["stock_db_v108"].keys() if code in vip_list_parsed]
+        valid_vips = [code for code in st.session_state["stock_db_v109"].keys() if code in vip_list_parsed]
         
         if not valid_vips:
             st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
@@ -524,7 +524,7 @@ if "stock_db_v108" in st.session_state:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             
             for i, code in enumerate(valid_vips):
-                data = st.session_state["stock_db_v108"][code]
+                data = st.session_state["stock_db_v109"][code]
                 progress_bar.progress((i + 1) / len(valid_vips), text=f"正在分析並更新股價: {code} {data['name']}")
                 
                 price = get_realtime_price(code, data["price"])
@@ -545,14 +545,14 @@ if "stock_db_v108" in st.session_state:
             progress_bar.empty() 
             
             if results:
-                st.session_state["df_final_v108"] = pd.DataFrame(results)
+                st.session_state["df_final_v109"] = pd.DataFrame(results)
 
-if "df_final_v108" in st.session_state:
-    df = st.session_state["df_final_v108"].copy()
+if "df_final_v109" in st.session_state:
+    df = st.session_state["df_final_v109"].copy()
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        # 💡 V108: 精簡標題為「🎯 數據特寫」
+        # 💡 V109: 精簡標題，視覺更純淨
         st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
         
         selected_stock = st.selectbox("📌 搜尋個股：", sorted(df["股票名稱"].tolist()), label_visibility="collapsed")
@@ -596,7 +596,7 @@ if "df_final_v108" in st.session_state:
                 
         chart_data = pd.DataFrame(data_viz)
         
-        # 💡 V108: 徹底拔除 tooltip，讓手機版不再彈出黑框干擾！
+        # 💡 V109: 強制設定 tooltip=alt.value(None) 徹底封殺浮動黑框！
         bars = alt.Chart(chart_data).mark_bar().encode(
             x=alt.X('大類:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
             y=alt.Y('營收(億):Q', title=None), 
@@ -606,22 +606,28 @@ if "df_final_v108" in st.session_state:
                                 range=["#004c6d", "#cce6ff", "#66b2ff", "#0073e6", "#3399ff", "#ff4b4b"]
                             )),
             order=alt.Order('小項:N', sort='ascending'),
+            tooltip=alt.value(None),
             column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
         ).properties(width=55, height=220)
         st.altair_chart(bars, use_container_width=False) 
     
     st.divider()
     
-    st.markdown("### 🧮 個人專屬戰略數據總表 (💡 游標放在表內往下捲動，標題會自動凍結喔！)", unsafe_allow_html=True)
+    st.markdown("### 🧮 個人專屬戰略數據總表", unsafe_allow_html=True)
     
+    # 💡 V109: 將 set_index 嚴格設定為只有 "股票名稱"，這會形成完美的「凍結第一欄」效果！
     mini_df = df[df["股票名稱"] == selected_stock].drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
     mini_df = mini_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
-    mini_df = mini_df.set_index(["股票名稱", "最新股價"])
-    format_dict = {"最新股價": "{:.2f}", "当季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
+    mini_df = mini_df.set_index("股票名稱")
+    
+    format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
+    
+    st.dataframe(mini_df.style.apply(lambda x: ['background-color: rgba(255, 235, 59, 0.2)']*len(x), axis=1).format(format_dict), use_container_width=True)
     
     display_df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
     display_df = display_df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False])
     display_df = display_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
-    display_df = display_df.set_index(["股票名稱", "最新股價"])
+    display_df = display_df.set_index("股票名稱")
+    
     def highlight_yield(val): return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 4.0 else ''
     st.dataframe(display_df.style.map(highlight_yield, subset=['前瞻殖利率(%)']).format(format_dict), height=600, use_container_width=True)
