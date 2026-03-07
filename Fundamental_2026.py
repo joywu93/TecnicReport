@@ -48,7 +48,7 @@ st.markdown("""
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 ADMIN_EMAILS = ["joywu4093@gmail.com"]
 
-st.title("📊 2026 戰略指揮 (V113 快取極速版)")
+st.title("📊 2026 戰略指揮 (V114 雷達校準版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -172,7 +172,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     }
 
 # ==========================================
-# 🌟 V113 核心：快取大腦 (解決 API 限制，極速載入)
+# 🌟 核心快取大腦
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至大數據庫，這只需一秒鐘...")
 def load_google_sheet_data():
@@ -242,7 +242,7 @@ def load_google_sheet_data():
             stock_db[code] = {
                 "name": str(row[c_name]) if c_name else "未知", 
                 "industry": str(row[c_industry]).strip() if c_industry and pd.notna(row[c_industry]) else "未分類",
-                "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_rev_last_12),
+                "rev_last_11": get_val(c_rev_last_11), "rev_last_12": get_val(c_last_12) if 'c_last_12' in locals() else get_val(c_rev_last_12),
                 "rev_this_1": get_val(c_rev_this_1), "rev_this_2": get_val(c_rev_this_2), "rev_this_3": get_val(c_rev_this_3),
                 "base_q_eps": base_eps, "non_op": get_val(c_non_op), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
                 "ly_q1_rev": get_val(c_ly_q1), "ly_q2_rev": get_val(c_ly_q2), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
@@ -254,7 +254,6 @@ def load_google_sheet_data():
     except Exception as e:
         return {"error": str(e)}
 
-# 啟動快取讀取
 stock_db_cached = load_google_sheet_data()
 if stock_db_cached and "error" in stock_db_cached:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{stock_db_cached['error']}")
@@ -405,17 +404,15 @@ if is_admin:
                                             
                                 if total_updated > 0:
                                     status.update(label=f"🎉 營收更新成功！已寫入 {total_updated} 張分頁！", state="complete", expanded=False)
-                                    # 💡 V113 關鍵：更新後清除快取，這樣重整畫面才會看到新數字！
                                     st.cache_data.clear()
                                     st.balloons()
                                 else: status.update(label=f"⚠️ 無法更新。請確保試算表中有欄位標題為『{target_m_header}單月營收(億)』", state="error", expanded=True)
                     except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
 # ==========================================
-# 4. 執行與呈現 (V113 UI 渲染與權限切割)
+# 4. 執行與呈現
 # ==========================================
 if stock_db_cached:
-    # 💡 V113 權限切割：如果不是管理員，直接不產生雷達頁面！
     if is_admin:
         tabs = st.tabs(["🎯 專屬戰略指揮 (VIP清單)", "🔍 戰略選股雷達 (全市場掃描)"])
         tab_vip, tab_radar = tabs[0], tabs[1]
@@ -452,15 +449,14 @@ if stock_db_cached:
                     )
                     results.append(res)
                 progress_bar.empty() 
-                if results: st.session_state["df_final_v113"] = pd.DataFrame(results)
+                if results: st.session_state["df_final_v114"] = pd.DataFrame(results)
 
-        if "df_final_v113" in st.session_state:
-            df = st.session_state["df_final_v113"].copy()
+        if "df_final_v114" in st.session_state:
+            df = st.session_state["df_final_v114"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
                 
-                # 💡 V113 嚴格首選記憶修復：確保一定是輸入框的第一個代號
                 vip_list_parsed = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
                 options = sorted(df["股票名稱"].tolist())
                 default_idx = 0
@@ -542,12 +538,12 @@ if stock_db_cached:
     # ----------------------------
     if tab_radar is not None:
         with tab_radar:
-            st.markdown("💡 *註：雷達統一採用「Google試算表中之股價」進行盤後初篩。*")
+            st.markdown("💡 *註：請確保 Google 試算表中的「成交」欄位有最新股價，否則會因股價為0被系統濾除。*")
             
             col_r1, col_r2 = st.columns(2)
             with col_r1:
-                filter_momentum = st.checkbox("☑️ 動能突破 (預估Q1 > 去年Q2)", value=False)
-                filter_growth = st.checkbox("☑️ 成長股濾網 (預估年成長 > 10%)", value=False)
+                filter_momentum = st.checkbox("☑️ 動能突破 (動態預估Q1 > 去年Q2)", value=False)
+                filter_growth = st.checkbox("☑️ 成長股濾網 (預估年成長 >= 10%)", value=False)
             with col_r2:
                 filter_yield = st.selectbox("☑️ 高殖利率護體", ["無限制", "大於 4%", "大於 5%", "大於 6%"])
                 filter_per = st.slider("☑️ 便宜價過濾 (本益比小於)", 5, 50, 50)
@@ -555,11 +551,10 @@ if stock_db_cached:
             st.markdown("##### 🚫 產業與特定個股排除")
             col_ex1, col_ex2 = st.columns(2)
             with col_ex1:
-                exclude_finance = st.checkbox("🚫 排除「金融保險」", help="自動排除名稱含：金控,銀行,壽險,產險,保險,證券,票券")
-                exclude_construction = st.checkbox("🚫 排除「營建地產」", help="自動排除名稱含：建設,營造,地產,開發,工程")
+                exclude_finance = st.checkbox("🚫 排除「金融保險」", help="排除名稱含：金控,銀行,壽險,產險,保險,證券,票券")
+                exclude_construction = st.checkbox("🚫 排除「營建地產」", help="排除代號 25,55 開頭，及名稱含建設,營造,地產,開發")
             with col_ex2:
-                # 💡 V113 說明更新：告訴使用者可以直接輸入代號來封殺整個族群！
-                exclude_keywords = st.text_input("🚫 自訂排除(支援代號前綴)", placeholder="例如輸入：25, 55, KY, 航運")
+                exclude_keywords = st.text_input("🚫 自訂排除(支援代號前綴)", placeholder="例如輸入：KY, 航運, 23 (用逗號隔開)")
 
             if st.button("📡 啟動全市場掃描", type="primary", use_container_width=True):
                 with st.spinner("快取引擎啟動，正在閃電掃描 1900 檔個股..."):
@@ -574,10 +569,13 @@ if stock_db_cached:
                     
                     radar_results = []
                     for code, data in stock_db_cached.items():
-                        # 💡 V113 超強封殺術：不僅檢查名稱，還檢查「代號開頭」是否符合！
                         stock_name = data["name"]
                         if exclude_finance and any(k in stock_name for k in finance_kws): continue
-                        if exclude_construction and any(k in stock_name for k in construction_kws): continue
+                        
+                        # 💡 V114 強化：營建股自動排除 25 或 55 開頭的代號！
+                        if exclude_construction and (any(k in stock_name for k in construction_kws) or str(code).startswith('25') or str(code).startswith('55')): 
+                            continue
+                            
                         if user_kws and any((k in stock_name or str(code).startswith(k)) for k in user_kws): continue
                         
                         res = auto_strategic_model(
@@ -591,8 +589,10 @@ if stock_db_cached:
                             acc_eps=data.get("acc_eps", 0), declared_div=data.get("declared_div", 0) 
                         )
                         
-                        if filter_momentum and res["_total_est_qs"][0] <= res["_ly_qs"][1]: continue
-                        if filter_growth and res["預估年成長率(%)"] <= 10.0: continue
+                        # 💡 V114 修正：改用動態當季預估均營收，並放寬邊界條件
+                        dynamic_q1_est = res["當季預估均營收"] * 3
+                        if filter_momentum and dynamic_q1_est <= res["_ly_qs"][1]: continue
+                        if filter_growth and res["預估年成長率(%)"] < 10.0: continue
                         if yield_threshold > 0 and res["前瞻殖利率(%)"] < yield_threshold: continue
                         if filter_per < 50 and (res["本益比(PER)"] <= 0 or res["本益比(PER)"] > filter_per): continue
                         
