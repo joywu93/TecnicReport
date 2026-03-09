@@ -46,7 +46,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V124 雙核資料庫版)")
+st.title("📊 2026 戰略指揮 (V125 智能防禦升級版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -127,7 +127,7 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     }
 
 # ==========================================
-# 🏦 核心大腦二：金融防禦存股專屬預估引擎
+# 🏦 核心大腦二：金融防禦存股專屬預估引擎 (V125 修正版)
 # ==========================================
 def financial_strategic_model(name, code, current_month, data, simulated_month):
     rev_this_1, rev_this_2, rev_this_3 = data.get("rev_this_1",0), data.get("rev_this_2",0), data.get("rev_this_3",0)
@@ -141,12 +141,12 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     elif simulated_month == 3: dynamic_base_avg = (sim_rev_1 * 2 + sim_rev_2) / 3 if sim_rev_2 > 0 else sim_rev_1
     else: dynamic_base_avg = (sim_rev_1 + sim_rev_2 + sim_rev_3) / 3
 
-    est_q1_rev = dynamic_base_avg * 3
-    last_q_rev = data["ly_q4_rev"] 
+    # 💡 V125 重大修正：改用已考慮 Q3 備用的 base_q_eps 與 base_q_avg_rev，避免 Q4 空白導致 EPS 為 0
+    base_q_eps = data["base_q_eps"]
+    base_q_avg_rev = data["base_q_avg_rev"]
     
-    base_eps = data["eps_q4"] * (1 - (data["non_op"] / 100))
-    rev_qoq_ratio = est_q1_rev / last_q_rev if last_q_rev > 0 else 1
-    est_q1_eps = base_eps * rev_qoq_ratio
+    # 精準環比推算 Q1 EPS
+    est_q1_eps = base_q_eps * (1 - (data.get("non_op", 0) / 100)) * (dynamic_base_avg / base_q_avg_rev) if base_q_avg_rev > 0 else 0
     
     ly_total_eps = data["eps_q1"] + data["eps_q2"] + data["eps_q3"] + data["eps_q4"]
     if data["eps_q1"] > 0 and ly_total_eps > 0:
@@ -187,7 +187,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     }
 
 # ==========================================
-# 🌟 核心快取大腦 (V124 雙資料庫解析)
+# 🌟 核心快取大腦 
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫，這只需兩秒鐘...")
 def load_google_sheet_data():
@@ -200,11 +200,9 @@ def load_google_sheet_data():
         
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
         
-        # 1. 讀取一般個股總表
         target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
         df_general = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in target_sheets if len(ws.get_all_values()) > 0], ignore_index=True) if target_sheets else pd.DataFrame()
         
-        # 2. 讀取專屬金融股表
         finance_sheets = [ws for ws in worksheets if "金融股" in ws.title]
         df_finance = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in finance_sheets if len(ws.get_all_values()) > 0], ignore_index=True) if finance_sheets else pd.DataFrame()
 
@@ -261,6 +259,8 @@ def load_google_sheet_data():
                 
                 rev_q4 = get_val(c_ly_q4) or (get_val(c_rev_10) + get_val(c_rev_last_11) + get_val(c_rev_last_12))
                 eps_q3, eps_q4, rev_q3 = get_val(c_eps_q3), get_val(c_eps_q4), get_val(c_ly_q3)
+                
+                # 💡 在這裡建立 robust 的 base_eps
                 base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
 
                 db[code] = {
@@ -345,7 +345,7 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎一：月營收與股價自動更新 (包含金融股)
+# 🌟 引擎一：月營收與股價自動更新
 # ==========================================
 if is_admin:
     st.sidebar.divider()
@@ -380,7 +380,6 @@ if is_admin:
                             creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
                             client = gspread.authorize(creds)
                             worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-                            # 💡 V124 股價機器人會同時更新「金融股」分頁
                             target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
                             
                             total_price_updated = 0
@@ -431,7 +430,6 @@ if is_admin:
                         creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
                         client = gspread.authorize(creds)
                         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-                        # 💡 V124 營收機器人會同時更新「金融股」分頁
                         target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
                         
                         if not target_sheets: status.update(label="任務失敗：找不到相關分頁", state="error", expanded=True)
@@ -529,7 +527,7 @@ if cached_data:
         tab_vip, tab_radar, tab_fin = tabs[0], None, None
     
     # ----------------------------
-    # Tab 1: VIP 清單功能 (支援混搭)
+    # Tab 1: VIP 清單功能 
     # ----------------------------
     with tab_vip:
         if st.button(f"🚀 執行戰略分析", type="primary"):
@@ -539,7 +537,6 @@ if cached_data:
             progress_bar = st.progress(0, text="連線國際資料庫獲取最新報價...")
             found_count = 0
             for i, code in enumerate(vip_list_parsed):
-                # 💡 V124 智慧雙核搜尋：先找一般表，找不到再找金融表
                 data = stock_db_general.get(code)
                 if not data: data = stock_db_finance.get(code)
                 
@@ -564,10 +561,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v124"] = pd.DataFrame(results)
+                st.session_state["df_final_v125"] = pd.DataFrame(results)
 
-        if "df_final_v124" in st.session_state:
-            df = st.session_state["df_final_v124"].copy()
+        if "df_final_v125" in st.session_state:
+            df = st.session_state["df_final_v125"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
@@ -683,7 +680,6 @@ if cached_data:
                     user_kws = [k.strip() for k in re.split(r'[;,\s\t]+', exclude_keywords) if k.strip()]
                     radar_results = []
                     
-                    # 💡 V124 一般雷達只掃描 stock_db_general 
                     for code, data in stock_db_general.items():
                         stock_code = str(code).strip()
                         stock_name = data["name"]
@@ -738,7 +734,7 @@ if cached_data:
                         st.dataframe(radar_df.style.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.15)']*len(x), axis=1).format(format_dict), height=600, use_container_width=True)
 
     # ----------------------------
-    # Tab 3: 🏦 金融防禦存股雷達 (V124 專屬資料庫版)
+    # Tab 3: 🏦 金融防禦存股雷達
     # ----------------------------
     if tab_fin is not None:
         with tab_fin:
@@ -756,7 +752,6 @@ if cached_data:
                 with st.spinner("讀取專屬金融分頁，篩選優質定存股..."):
                     fin_results = []
                     
-                    # 💡 V124 完美讀取您指定的金融股專屬資料表
                     for code, data in stock_db_finance.items():
                         stock_code = str(code).strip()
                         
@@ -766,14 +761,14 @@ if cached_data:
                             data=data, simulated_month=simulated_month
                         )
                         
-                        # PBR 與 殖利率 過濾
-                        if res["PBR(股價淨值比)"] > 0 and res["PBR(股價淨值比)"] > fin_pbr_max: continue
+                        # 💡 V125 修正：濾除 PBR 為 0 的異常股 (未填寫財報資料)
+                        if res["PBR(股價淨值比)"] <= 0 or res["PBR(股價淨值比)"] > fin_pbr_max: continue
                         if fin_yield_min > 0 and res["前瞻殖利率(%)"] < fin_yield_min: continue
                         
                         fin_results.append(res)
                             
                     if not fin_results:
-                        st.warning("目前沒有符合條件的金融股，請放寬 PBR 或殖利率標準，或確認 Google 表單「金融股」分頁資料正確。")
+                        st.warning("目前沒有符合條件的金融股，請放寬標準，或確認您的 Google 表單「金融股」分頁資料正確。")
                     else:
                         st.success(f"🎉 掃描完成！為您找出 **{len(fin_results)}** 檔潛力防禦型金融股！")
                         fin_df = pd.DataFrame(fin_results)
