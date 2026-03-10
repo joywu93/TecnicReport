@@ -46,7 +46,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V129 終極防空包彈版)")
+st.title("📊 2026 戰略指揮 (V130 時光機雙重抓取版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -352,6 +352,48 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
+# 💡 V130 專屬時光機功能庫 (抓取前期累計資料)
+# ==========================================
+def fetch_mops_ytd_html(year_roc, season):
+    url = "https://mops.twse.com.tw/mops/web/ajax_t163sb04"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    res_dict = {}
+    for typek in ['sii', 'otc']:
+        payload = {'encodeURIComponent': '1', 'step': '1', 'firstin': '1', 'off': '1', 'TYPEK': typek, 'year': str(year_roc), 'season': str(season)}
+        try:
+            r = requests.post(url, data=payload, headers=headers, timeout=15)
+            dfs = pd.read_html(io.StringIO(r.text))
+            for df in dfs:
+                # 處理財報常見的多層次表頭 (MultiIndex)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [c[-1] for c in df.columns]
+                
+                if '公司代號' in df.columns:
+                    for _, row in df.iterrows():
+                        code = str(row['公司代號']).strip()
+                        if not code.isdigit() or len(code) != 4: continue
+                        
+                        def s2f(c_names):
+                            for c in c_names:
+                                if c in df.columns and pd.notna(row[c]):
+                                    try: return float(str(row[c]).replace(',', '').replace('(', '-').replace(')', '').strip())
+                                    except: pass
+                            return 0.0
+                            
+                        # 兼容不同產業的財報科目名稱
+                        rev = s2f(['營業收入', '收益', '淨收益'])
+                        gp = s2f(['營業毛利（毛損）淨額', '營業毛利（毛損）', '營業毛利'])
+                        op = s2f(['營業利益（損失）', '營業利益'])
+                        nonop = s2f(['營業外收入及支出'])
+                        pretax = s2f(['稅前淨利（淨損）', '稅前淨利'])
+                        
+                        res_dict[code] = {
+                            'rev': rev, 'gp': gp, 'op': op, 'nonop': nonop, 'pretax': pretax
+                        }
+        except: pass
+    return res_dict
+
+# ==========================================
 # 🌟 引擎：官方自動更新專區 
 # ==========================================
 if is_admin:
@@ -516,65 +558,66 @@ if is_admin:
                     except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
     # ------------------
-    # 💡 3. V129 終極防禦：空包彈攔截系統
+    # 💡 3. V130 終極大招：時光機雙重抓取 (完美計算單季三率)
     # ------------------
     with st.sidebar.expander("🤖 季報自動更新 (官方資料)"):
-        st.markdown("💡 抓取官方『綜合損益表』。已啟動防護罩，自動過濾未提供 EPS 之空包彈數據。")
+        st.markdown("💡 搭載 V130 時光機引擎：自動抓取前期累計資料相減，精準還原【純單季毛利率與營益率】！徹底擺脫 Goodinfo。")
         target_q = st.text_input("輸入欲更新的季報欄位前綴 (如: 25Q4)", value="25Q4")
         
         if st.button("⚡ 一鍵更新官方季報", type="primary", use_container_width=True):
             if "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
             else:
-                with st.status("啟動 V129 終極防護清洗機器人...", expanded=True) as status:
+                with st.status("啟動 V130 時光機雙核引擎...", expanded=True) as status:
                     try:
                         try:
                             target_year_roc = str((2000 + int(target_q[:2])) - 1911) 
-                            target_q_num = str(target_q[3])
+                            target_q_num = int(target_q[3])
                         except:
                             raise ValueError("欄位前綴格式錯誤，請輸入如 '25Q4' 的格式")
 
                         headers_agent = {'User-Agent': 'Mozilla/5.0'}
                         
-                        st.write("1️⃣ 正在從官方 Open API 撈取上市櫃綜合損益表...")
+                        st.write(f"1️⃣ 正在抓取 {target_year_roc}年 第{target_q_num}季 最新累計財報...")
                         res_twse_q = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers_agent, verify=False, timeout=15).json()
                         res_tpex_q = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers_agent, verify=False, timeout=15).json()
                         
-                        fs_dict = {}
+                        curr_dict = {}
                         for item in (res_twse_q + res_tpex_q):
                             code = str(item.get('公司代號', '')).strip()
                             item_y = str(item.get('年度', '')).strip()
                             item_q = str(item.get('季別', '')).strip()
                             
-                            if not code or item_y != target_year_roc or item_q != target_q_num:
+                            if not code or item_y != target_year_roc or item_q != str(target_q_num):
                                 continue
                             
                             def s2f(val):
                                 try: return float(str(val).replace(',', '').strip())
                                 except: return 0.0
                                 
-                            # 💡 V129 核彈級防禦：精準攔截 EPS 空包彈
-                            eps_raw = item.get('基本每股盈餘（元）')
-                            if eps_raw is None: eps_raw = item.get('基本每股盈餘(元)')
-                            if eps_raw is None: eps_raw = item.get('每股盈餘')
-                            
+                            eps_raw = item.get('基本每股盈餘（元）') or item.get('基本每股盈餘(元)') or item.get('每股盈餘')
                             eps_str = str(eps_raw if eps_raw is not None else '').strip()
-                            # 只要官方給的 EPS 欄位是空白，has_eps 就是 False！
                             has_eps = bool(eps_str) and eps_str != 'None'
 
-                            fs_dict[code] = {
-                                "revenue": s2f(item.get('營業收入', 0)),
-                                "gross_profit": s2f(item.get('營業毛利（毛損）淨額', 0) or item.get('營業毛利（毛損）', 0)),
-                                "op_profit": s2f(item.get('營業利益（損失）', 0)),
-                                "non_op": s2f(item.get('營業外收入及支出', 0)),
-                                "pre_tax": s2f(item.get('稅前淨利（淨損）', 0)),
+                            curr_dict[code] = {
+                                "rev": s2f(item.get('營業收入', 0)),
+                                "gp": s2f(item.get('營業毛利（毛損）淨額', 0) or item.get('營業毛利（毛損）', 0)),
+                                "op": s2f(item.get('營業利益（損失）', 0)),
+                                "nonop": s2f(item.get('營業外收入及支出', 0)),
+                                "pretax": s2f(item.get('稅前淨利（淨損）', 0)),
                                 "eps": s2f(eps_str),
-                                "has_eps": has_eps  # 防護罩標記
+                                "has_eps": has_eps
                             }
 
-                        if not fs_dict:
-                            status.update(label=f"⚠️ 官方目前尚無 {target_q} ({target_year_roc}年第{target_q_num}季) 的財報資料！", state="error", expanded=True)
+                        if not curr_dict:
+                            status.update(label=f"⚠️ 官方目前尚無 {target_q} 的財報資料！", state="error", expanded=True)
                         else:
-                            st.write("2️⃣ 正在讀取並比對您的 Google 試算表資料...")
+                            # 💡 V130 核心：啟動時光機抓取上一季資料！
+                            prev_dict = {}
+                            if target_q_num > 1:
+                                st.write(f"⏳ 啟動時光機！正在回溯 {target_year_roc}年 第{target_q_num-1}季 歷史財報以計算單季差異...")
+                                prev_dict = fetch_mops_ytd_html(target_year_roc, target_q_num - 1)
+                            
+                            st.write("2️⃣ 正在計算單季數字並比對 Google 試算表...")
                             scopes = ['https://www.googleapis.com/auth/spreadsheets']
                             creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
                             client = gspread.authorize(creds)
@@ -611,54 +654,53 @@ if is_admin:
                                     for row_i, row in enumerate(all_data):
                                         if row_i == 0: continue
                                         code = str(row[idx_code-1]).split('.')[0].strip()
-                                        if code in fs_dict:
-                                            fs = fs_dict[code]
+                                        
+                                        if code in curr_dict:
+                                            curr = curr_dict[code]
                                             
-                                            # 💡 V129 終極防護：只有當官方確認有給出 EPS 數字時，才允許覆蓋您的表單！
-                                            if fs["has_eps"]:
-                                                final_q_eps = fs["eps"]
-                                                if target_q_num == '4' and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
-                                                    try:
-                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                        v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
-                                                        v3 = float(str(row[idx_q3-1]).replace(',', '').strip() or 0)
-                                                        final_q_eps = fs["eps"] - v1 - v2 - v3
+                                            # EPS 確保非空包彈
+                                            if curr["has_eps"]:
+                                                final_q_eps = curr["eps"]
+                                                # 利用表單舊有資料精準扣除 EPS
+                                                if target_q_num == 4 and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
+                                                    try: final_q_eps -= (float(str(row[idx_q1-1]).replace(',', '').strip() or 0) + float(str(row[idx_q2-1]).replace(',', '').strip() or 0) + float(str(row[idx_q3-1]).replace(',', '').strip() or 0))
                                                     except: pass
-                                                elif target_q_num == '3' and idx_q1!=-1 and idx_q2!=-1:
-                                                    try:
-                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                        v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
-                                                        final_q_eps = fs["eps"] - v1 - v2
+                                                elif target_q_num == 3 and idx_q1!=-1 and idx_q2!=-1:
+                                                    try: final_q_eps -= (float(str(row[idx_q1-1]).replace(',', '').strip() or 0) + float(str(row[idx_q2-1]).replace(',', '').strip() or 0))
                                                     except: pass
-                                                elif target_q_num == '2' and idx_q1!=-1:
-                                                    try:
-                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                        final_q_eps = fs["eps"] - v1
+                                                elif target_q_num == 2 and idx_q1!=-1:
+                                                    try: final_q_eps -= float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
                                                     except: pass
                                                     
                                                 cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_target_eps, value=round(final_q_eps, 2)))
                                                 if idx_acc_eps != -1: 
-                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(fs["eps"], 2)))
+                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(curr["eps"], 2)))
                                                 
-                                            # 三率隔離保護機制
-                                            if target_q_num == '1' and fs["revenue"] > 0:
+                                            # 💡 V130 終極武器：純單季三率計算！
+                                            prev = prev_dict.get(code, {'rev':0, 'gp':0, 'op':0, 'nonop':0, 'pretax':0})
+                                            
+                                            sa_rev = curr['rev'] - prev['rev']
+                                            sa_gp = curr['gp'] - prev['gp']
+                                            sa_op = curr['op'] - prev['op']
+                                            sa_nonop = curr['nonop'] - prev['nonop']
+                                            sa_pretax = curr['pretax'] - prev['pretax']
+                                            
+                                            # 只有當單季營收 > 0 時才計算毛利與營益率 (保護金融股不報錯)
+                                            if sa_rev > 0:
                                                 if idx_gm != -1:
-                                                    gm = (fs["gross_profit"] / fs["revenue"]) * 100
-                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm, value=round(gm, 2)))
+                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm, value=round((sa_gp / sa_rev) * 100, 2)))
                                                 if idx_om != -1:
-                                                    om = (fs["op_profit"] / fs["revenue"]) * 100
-                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om, value=round(om, 2)))
+                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om, value=round((sa_op / sa_rev) * 100, 2)))
                                                     
-                                                if fs["pre_tax"] != 0 and idx_nonop != -1:
-                                                    nonop_ratio = (fs["non_op"] / fs["pre_tax"]) * 100
-                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round(nonop_ratio, 2)))
+                                            if sa_pretax != 0 and idx_nonop != -1:
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round((sa_nonop / sa_pretax) * 100, 2)))
                                     
                                     if cells_to_update:
-                                        st.write(f"安全寫入 {ws.title} ...")
+                                        st.write(f"神盾寫入 {ws.title} ...")
                                         ws.update_cells(cells_to_update)
                                         total_cells_updated += len(cells_to_update)
                                         
-                            status.update(label=f"🎉 財報安全更新成功！成功攔截空包彈，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
+                            status.update(label=f"🎉 時光機運算完成！成功寫入純單季三率，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
                             st.cache_data.clear() 
                             st.balloons()
                     except Exception as e:
@@ -715,10 +757,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v129"] = pd.DataFrame(results)
+                st.session_state["df_final_v130"] = pd.DataFrame(results)
 
-        if "df_final_v129" in st.session_state:
-            df = st.session_state["df_final_v129"].copy()
+        if "df_final_v130" in st.session_state:
+            df = st.session_state["df_final_v130"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
