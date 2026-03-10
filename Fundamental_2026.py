@@ -46,7 +46,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V128 官方財報防禦版)")
+st.title("📊 2026 戰略指揮 (V129 終極防空包彈版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -352,7 +352,7 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎：官方自動更新專區 (僅管理員)
+# 🌟 引擎：官方自動更新專區 
 # ==========================================
 if is_admin:
     st.sidebar.divider()
@@ -516,19 +516,17 @@ if is_admin:
                     except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
     # ------------------
-    # 💡 3. V128 防禦升級：嚴格年份季別鎖定與三率隔離
+    # 💡 3. V129 終極防禦：空包彈攔截系統
     # ------------------
     with st.sidebar.expander("🤖 季報自動更新 (官方資料)"):
-        st.markdown("💡 抓取官方『綜合損益表』，自動清洗計算單季 EPS，並防護毛利率不被累計值污染。")
+        st.markdown("💡 抓取官方『綜合損益表』。已啟動防護罩，自動過濾未提供 EPS 之空包彈數據。")
         target_q = st.text_input("輸入欲更新的季報欄位前綴 (如: 25Q4)", value="25Q4")
         
         if st.button("⚡ 一鍵更新官方季報", type="primary", use_container_width=True):
             if "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
             else:
-                with st.status("啟動 V128 官方財報清洗機器人...", expanded=True) as status:
+                with st.status("啟動 V129 終極防護清洗機器人...", expanded=True) as status:
                     try:
-                        # 拆解年份與季別，建立嚴格鎖定目標
-                        # 25Q4 -> 民國114年，第4季
                         try:
                             target_year_roc = str((2000 + int(target_q[:2])) - 1911) 
                             target_q_num = str(target_q[3])
@@ -547,7 +545,6 @@ if is_admin:
                             item_y = str(item.get('年度', '')).strip()
                             item_q = str(item.get('季別', '')).strip()
                             
-                            # 💡 V128 第一道防線：如果 API 給的年份季別，跟您要更新的不一樣，直接丟棄！
                             if not code or item_y != target_year_roc or item_q != target_q_num:
                                 continue
                             
@@ -555,13 +552,23 @@ if is_admin:
                                 try: return float(str(val).replace(',', '').strip())
                                 except: return 0.0
                                 
+                            # 💡 V129 核彈級防禦：精準攔截 EPS 空包彈
+                            eps_raw = item.get('基本每股盈餘（元）')
+                            if eps_raw is None: eps_raw = item.get('基本每股盈餘(元)')
+                            if eps_raw is None: eps_raw = item.get('每股盈餘')
+                            
+                            eps_str = str(eps_raw if eps_raw is not None else '').strip()
+                            # 只要官方給的 EPS 欄位是空白，has_eps 就是 False！
+                            has_eps = bool(eps_str) and eps_str != 'None'
+
                             fs_dict[code] = {
                                 "revenue": s2f(item.get('營業收入', 0)),
                                 "gross_profit": s2f(item.get('營業毛利（毛損）淨額', 0) or item.get('營業毛利（毛損）', 0)),
                                 "op_profit": s2f(item.get('營業利益（損失）', 0)),
                                 "non_op": s2f(item.get('營業外收入及支出', 0)),
                                 "pre_tax": s2f(item.get('稅前淨利（淨損）', 0)),
-                                "eps": s2f(item.get('基本每股盈餘（元）', 0))
+                                "eps": s2f(eps_str),
+                                "has_eps": has_eps  # 防護罩標記
                             }
 
                         if not fs_dict:
@@ -607,33 +614,33 @@ if is_admin:
                                         if code in fs_dict:
                                             fs = fs_dict[code]
                                             
-                                            # 💡 V128 第二道防線：智能拆解 EPS
-                                            final_q_eps = fs["eps"]
-                                            if target_q_num == '4' and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
-                                                try:
-                                                    v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                    v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
-                                                    v3 = float(str(row[idx_q3-1]).replace(',', '').strip() or 0)
-                                                    final_q_eps = fs["eps"] - v1 - v2 - v3
-                                                except: pass
-                                            elif target_q_num == '3' and idx_q1!=-1 and idx_q2!=-1:
-                                                try:
-                                                    v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                    v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
-                                                    final_q_eps = fs["eps"] - v1 - v2
-                                                except: pass
-                                            elif target_q_num == '2' and idx_q1!=-1:
-                                                try:
-                                                    v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
-                                                    final_q_eps = fs["eps"] - v1
-                                                except: pass
+                                            # 💡 V129 終極防護：只有當官方確認有給出 EPS 數字時，才允許覆蓋您的表單！
+                                            if fs["has_eps"]:
+                                                final_q_eps = fs["eps"]
+                                                if target_q_num == '4' and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
+                                                    try:
+                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
+                                                        v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
+                                                        v3 = float(str(row[idx_q3-1]).replace(',', '').strip() or 0)
+                                                        final_q_eps = fs["eps"] - v1 - v2 - v3
+                                                    except: pass
+                                                elif target_q_num == '3' and idx_q1!=-1 and idx_q2!=-1:
+                                                    try:
+                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
+                                                        v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
+                                                        final_q_eps = fs["eps"] - v1 - v2
+                                                    except: pass
+                                                elif target_q_num == '2' and idx_q1!=-1:
+                                                    try:
+                                                        v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
+                                                        final_q_eps = fs["eps"] - v1
+                                                    except: pass
+                                                    
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_target_eps, value=round(final_q_eps, 2)))
+                                                if idx_acc_eps != -1: 
+                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(fs["eps"], 2)))
                                                 
-                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_target_eps, value=round(final_q_eps, 2)))
-                                            if idx_acc_eps != -1: 
-                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(fs["eps"], 2)))
-                                                
-                                            # 💡 V128 第三道防線：三率隔離保護機制
-                                            # 官方資料只有「累計值」，所以只有更新 Q1 時才能精準寫入三率，Q2-Q4 放棄寫入以防污染！
+                                            # 三率隔離保護機制
                                             if target_q_num == '1' and fs["revenue"] > 0:
                                                 if idx_gm != -1:
                                                     gm = (fs["gross_profit"] / fs["revenue"]) * 100
@@ -651,7 +658,7 @@ if is_admin:
                                         ws.update_cells(cells_to_update)
                                         total_cells_updated += len(cells_to_update)
                                         
-                            status.update(label=f"🎉 財報安全更新成功！共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
+                            status.update(label=f"🎉 財報安全更新成功！成功攔截空包彈，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
                             st.cache_data.clear() 
                             st.balloons()
                     except Exception as e:
@@ -708,10 +715,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v128"] = pd.DataFrame(results)
+                st.session_state["df_final_v129"] = pd.DataFrame(results)
 
-        if "df_final_v128" in st.session_state:
-            df = st.session_state["df_final_v128"].copy()
+        if "df_final_v129" in st.session_state:
+            df = st.session_state["df_final_v129"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
