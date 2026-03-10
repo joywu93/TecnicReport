@@ -613,4 +613,70 @@ if is_admin:
                         for ws in target_sheets:
                             all_data = ws.get_all_values()
                             if not all_data: continue
-                            headers = all_data
+                            headers = all_data[0]
+                            
+                            idx_code = -1
+                            idx_target_eps, idx_acc_eps = -1, -1
+                            idx_gm, idx_om, idx_nonop = -1, -1, -1
+                            idx_gm_qoq, idx_om_qoq = -1, -1
+                            idx_q1, idx_q2, idx_q3 = -1, -1, -1
+                            target_year_prefix = target_q[:2] 
+                            
+                            for i, h in enumerate(headers):
+                                clean_h = str(h).replace('\n', '').replace(' ', '').strip()
+                                if "代號" in clean_h: idx_code = i + 1
+                                elif f"{target_q}單季每股盈餘" in clean_h: idx_target_eps = i + 1
+                                elif "最新累季每股盈餘" in clean_h or "最新累季EPS" in clean_h: idx_acc_eps = i + 1
+                                elif "最新單季毛利率" in clean_h:
+                                    if "增" in clean_h: idx_gm_qoq = i + 1
+                                    else: idx_gm = i + 1
+                                elif "最新單季營益率" in clean_h:
+                                    if "增" in clean_h: idx_om_qoq = i + 1
+                                    else: idx_om = i + 1
+                                elif "業外損益佔" in clean_h: idx_nonop = i + 1
+                                elif f"{target_year_prefix}Q1單季每股盈餘" in clean_h: idx_q1 = i + 1
+                                elif f"{target_year_prefix}Q2單季每股盈餘" in clean_h: idx_q2 = i + 1
+                                elif f"{target_year_prefix}Q3單季每股盈餘" in clean_h: idx_q3 = i + 1
+                                
+                            if idx_code != -1 and idx_target_eps != -1:
+                                cells_to_update = []
+                                for row_i, row in enumerate(all_data):
+                                    if row_i == 0: continue
+                                    code = str(row[idx_code-1]).split('.')[0].strip()
+                                    
+                                    if code in curr_dict:
+                                        curr = curr_dict[code]
+                                        
+                                        if curr["has_eps"]:
+                                            final_q_eps = curr["eps"]
+                                            if target_q_num == 4 and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
+                                                try: final_q_eps -= (float(str(row[idx_q1-1]).replace(',', '').strip() or 0) + float(str(row[idx_q2-1]).replace(',', '').strip() or 0) + float(str(row[idx_q3-1]).replace(',', '').strip() or 0))
+                                                except: pass
+                                            elif target_q_num == 3 and idx_q1!=-1 and idx_q2!=-1:
+                                                try: final_q_eps -= (float(str(row[idx_q1-1]).replace(',', '').strip() or 0) + float(str(row[idx_q2-1]).replace(',', '').strip() or 0))
+                                                except: pass
+                                            elif target_q_num == 2 and idx_q1!=-1:
+                                                try: final_q_eps -= float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
+                                                except: pass
+                                                
+                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_target_eps, value=round(final_q_eps, 2)))
+                                            if idx_acc_eps != -1: 
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(curr["eps"], 2)))
+                                        
+                                        # 💡 寫入重構後的三率，並清空季增數
+                                        if curr["rev"] > 0:
+                                            if idx_gm != -1:
+                                                gm = (curr["gp"] / curr["rev"]) * 100
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm, value=round(gm, 2)))
+                                                if idx_gm_qoq != -1: cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm_qoq, value="")) 
+                                            if idx_om != -1:
+                                                om = (curr["op"] / curr["rev"]) * 100
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om, value=round(om, 2)))
+                                                if idx_om_qoq != -1: cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om_qoq, value="")) 
+                                                
+                                        if curr["pretax"] != 0 and idx_nonop != -1:
+                                            nonop_ratio = (curr["nonop"] / curr["pretax"]) * 100
+                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round(nonop_ratio, 2)))
+                                
+                                if cells_to_update:
+                                    st.write(f
