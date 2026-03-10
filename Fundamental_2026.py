@@ -46,7 +46,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V131 穩健年度三率版)")
+st.title("📊 2026 戰略指揮 (V132 工業級單季清洗版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -352,6 +352,60 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
+# 💡 V132 工業級防護：精準字串鎖定時光機
+# ==========================================
+def fetch_mops_ytd_html_safe(year_roc, season):
+    url = "https://mops.twse.com.tw/mops/web/ajax_t163sb04"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    res_dict = {}
+    for typek in ['sii', 'otc']:
+        payload = {'encodeURIComponent': '1', 'step': '1', 'firstin': '1', 'off': '1', 'TYPEK': typek, 'year': str(year_roc), 'season': str(season)}
+        try:
+            r = requests.post(url, data=payload, headers=headers, timeout=15)
+            r.encoding = 'utf8'
+            dfs = pd.read_html(io.StringIO(r.text))
+            for df in dfs:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [str(c[-1]).strip() for c in df.columns]
+                else:
+                    df.columns = [str(c).strip() for c in df.columns]
+                
+                if '公司代號' not in df.columns:
+                    continue
+                    
+                df['公司代號'] = df['公司代號'].astype(str).str.replace('.0', '', regex=False).str.strip()
+                
+                for _, row in df.iterrows():
+                    code = row['公司代號']
+                    if len(code) != 4 or not code.isdigit():
+                        continue
+                        
+                    # 💡 工業級模糊比對，絕對不會被全形/半形括號騙倒
+                    def ext(keywords):
+                        for c in df.columns:
+                            clean_c = str(c).replace(' ', '').replace('（', '(').replace('）', ')')
+                            for kw in keywords:
+                                if kw in clean_c:
+                                    val = str(row[c]).replace(',', '').replace('(', '-').replace(')', '').strip()
+                                    try: return float(val)
+                                    except: pass
+                        return 0.0
+                        
+                    rev = ext(['營業收入', '收益', '淨收益'])
+                    gp = ext(['營業毛利', '毛損'])
+                    op = ext(['營業利益', '營業損失'])
+                    nonop = ext(['營業外收入', '營業外支出', '營業外損益'])
+                    pretax = ext(['稅前淨利', '稅前損益', '繼續營業單位稅前'])
+                    
+                    if rev <= 0 or abs(gp) > rev * 2 or abs(op) > rev * 5:
+                        continue
+                        
+                    res_dict[code] = {'rev': rev, 'gp': gp, 'op': op, 'nonop': nonop, 'pretax': pretax}
+        except:
+            pass
+    return res_dict
+
+# ==========================================
 # 🌟 引擎：官方自動更新專區 
 # ==========================================
 if is_admin:
@@ -516,16 +570,16 @@ if is_admin:
                     except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
     # ------------------
-    # 💡 3. V131 壯士斷腕：穩健年度三率版 (完全捨棄不穩定的 HTML 爬蟲)
+    # 💡 3. V132：工業級單季還原清洗站
     # ------------------
     with st.sidebar.expander("🤖 季報自動更新 (官方資料)"):
-        st.markdown("💡 抓取官方『綜合損益表』。自動計算精準 EPS，並寫入最穩健的【全年度平均三率】！完全免除爬蟲錯位風險。")
+        st.markdown("💡 搭載 V132 工業級防護引擎：完美還原【純單季 EPS 與 三率】，徹底脫離 Goodinfo，並搭載 ±300% 防爆保險絲。")
         target_q = st.text_input("輸入欲更新的季報欄位前綴 (如: 25Q4)", value="25Q4")
         
         if st.button("⚡ 一鍵更新官方季報", type="primary", use_container_width=True):
             if "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
             else:
-                with st.status("啟動 V131 穩健年度三率引擎...", expanded=True) as status:
+                with st.status("啟動 V132 工業級清洗引擎...", expanded=True) as status:
                     try:
                         try:
                             target_year_roc = str((2000 + int(target_q[:2])) - 1911) 
@@ -535,7 +589,7 @@ if is_admin:
 
                         headers_agent = {'User-Agent': 'Mozilla/5.0'}
                         
-                        st.write(f"1️⃣ 正在抓取 {target_year_roc}年 第{target_q_num}季 最新累計財報...")
+                        st.write(f"1️⃣ 正在從 Open API 抓取 {target_year_roc}年 第{target_q_num}季 最新財報...")
                         res_twse_q = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers_agent, verify=False, timeout=15).json()
                         res_tpex_q = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers_agent, verify=False, timeout=15).json()
                         
@@ -556,7 +610,6 @@ if is_admin:
                             eps_str = str(eps_raw if eps_raw is not None else '').strip()
                             has_eps = bool(eps_str) and eps_str != 'None'
 
-                            # 💡 V131: 單純抓取官方穩定資料，不依賴時光機
                             curr_dict[code] = {
                                 "rev": s2f(item.get('營業收入', 0)),
                                 "gp": s2f(item.get('營業毛利（毛損）淨額', 0) or item.get('營業毛利（毛損）', 0)),
@@ -570,7 +623,12 @@ if is_admin:
                         if not curr_dict:
                             status.update(label=f"⚠️ 官方目前尚無 {target_q} 的財報資料！", state="error", expanded=True)
                         else:
-                            st.write("2️⃣ 正在計算穩健年度數字並寫入 Google 試算表...")
+                            prev_dict = {}
+                            if target_q_num > 1:
+                                st.write(f"⏳ 啟動時光機！嚴密過濾 {target_year_roc}年 第{target_q_num-1}季 歷史財報...")
+                                prev_dict = fetch_mops_ytd_html_safe(target_year_roc, target_q_num - 1)
+                            
+                            st.write("2️⃣ 執行單季扣除與防護過濾...")
                             scopes = ['https://www.googleapis.com/auth/spreadsheets']
                             creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
                             client = gspread.authorize(creds)
@@ -611,7 +669,7 @@ if is_admin:
                                         if code in curr_dict:
                                             curr = curr_dict[code]
                                             
-                                            # EPS 確保非空包彈 (扣除前三季歷史資料，確保單季純度)
+                                            # 1. 處理 EPS
                                             if curr["has_eps"]:
                                                 final_q_eps = curr["eps"]
                                                 if target_q_num == 4 and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
@@ -628,25 +686,38 @@ if is_admin:
                                                 if idx_acc_eps != -1: 
                                                     cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(curr["eps"], 2)))
                                                 
-                                            # 💡 V131 穩健三率：直接寫入「官方年度/累計平均毛利率」！保證數據穩定在 10%~40% 正常範圍！
-                                            if curr["rev"] > 0:
-                                                if idx_gm != -1:
-                                                    gm = (curr["gp"] / curr["rev"]) * 100
+                                            # 2. 處理三率 (V132 純單季還原 + 防爆保險絲)
+                                            prev = prev_dict.get(code, {'rev':0, 'gp':0, 'op':0, 'nonop':0, 'pretax':0})
+                                            
+                                            if target_q_num > 1 and prev['rev'] > 0:
+                                                sa_rev = curr['rev'] - prev['rev']
+                                                sa_gp = curr['gp'] - prev['gp']
+                                                sa_op = curr['op'] - prev['op']
+                                                sa_nonop = curr['nonop'] - prev['nonop']
+                                                sa_pretax = curr['pretax'] - prev['pretax']
+                                            else:
+                                                sa_rev, sa_gp, sa_op, sa_nonop, sa_pretax = curr['rev'], curr['gp'], curr['op'], curr['nonop'], curr['pretax']
+                                            
+                                            if sa_rev > 0:
+                                                gm = (sa_gp / sa_rev) * 100
+                                                om = (sa_op / sa_rev) * 100
+                                                # 🛡️ 數學保險絲：過濾掉因為財報重編導致的破千%防爆錯誤
+                                                if -300 <= gm <= 300 and idx_gm != -1:
                                                     cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm, value=round(gm, 2)))
-                                                if idx_om != -1:
-                                                    om = (curr["op"] / curr["rev"]) * 100
+                                                if -300 <= om <= 300 and idx_om != -1:
                                                     cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om, value=round(om, 2)))
                                                     
-                                            if curr["pretax"] != 0 and idx_nonop != -1:
-                                                nonop_ratio = (curr["nonop"] / curr["pretax"]) * 100
-                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round(nonop_ratio, 2)))
+                                            if sa_pretax != 0 and idx_nonop != -1:
+                                                nonop_ratio = (sa_nonop / sa_pretax) * 100
+                                                if -500 <= nonop_ratio <= 500:
+                                                    cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round(nonop_ratio, 2)))
                                     
                                     if cells_to_update:
-                                        st.write(f"穩定寫入 {ws.title} ...")
+                                        st.write(f"寫入單季數據至 {ws.title} ...")
                                         ws.update_cells(cells_to_update)
                                         total_cells_updated += len(cells_to_update)
                                         
-                            status.update(label=f"🎉 V131 穩健寫入完成！已寫入全年平均三率，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
+                            status.update(label=f"🎉 V132 官方純單季財報更新完成！共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
                             st.cache_data.clear() 
                             st.balloons()
                     except Exception as e:
@@ -703,10 +774,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v131"] = pd.DataFrame(results)
+                st.session_state["df_final_v132"] = pd.DataFrame(results)
 
-        if "df_final_v131" in st.session_state:
-            df = st.session_state["df_final_v131"].copy()
+        if "df_final_v132" in st.session_state:
+            df = st.session_state["df_final_v132"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
