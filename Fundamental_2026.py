@@ -43,7 +43,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V149 終極雙引擎與圖表歸位版)")
+st.title("📊 2026 戰略指揮 (V150 終極無損防禦版)")
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -60,50 +60,51 @@ def get_realtime_price(code, default_price):
         p = yf.Ticker(f"{code}.TWO").fast_info['last_price']
         if p > 0: return float(p)
     except: pass
-    
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    for sfx in ['.TW', '.TWO']:
-        try:
-            res = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{sfx}", headers=headers, timeout=2, verify=False).json()
-            p = res['chart']['result'][0]['meta']['regularMarketPrice']
-            if p > 0: return float(p)
-        except: pass
     return default_price
 
-# 💡 V149 核心：輕量級 Yahoo JSON 引擎 (同時抓取單季 EPS 與 毛利)
-def get_yahoo_full_financials(code):
+# 💡 V150 終極缺件補完引擎：Goodinfo 級別的 MOPS 個別財報爬蟲
+def get_mops_single_ytd(code, y_roc, season):
+    url = "https://mops.twse.com.tw/mops/web/ajax_t164sb04"
+    # 🚨 修復致命錯誤：isnew 必須為 true 才能抓到近年的資料
+    payload = {
+        'encodeURIComponent': '1', 'step': '1', 'firstin': '1', 'off': '1',
+        'queryName': 'co_id', 'inpuType': 'co_id', 'TYPEK': 'all', 'isnew': 'true',
+        'co_id': str(code), 'year': str(y_roc), 'season': str(season)
+    }
     headers = {'User-Agent': 'Mozilla/5.0'}
-    for sfx in ['.TW', '.TWO']:
-        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{code}{sfx}?modules=incomeStatementHistoryQuarterly,earningsHistory"
-        try:
-            res = requests.get(url, headers=headers, timeout=5, verify=False).json()
-            if res and res.get('quoteSummary', {}).get('result'):
-                result = res['quoteSummary']['result'][0]
+    try:
+        r = requests.post(url, data=payload, headers=headers, timeout=10)
+        r.encoding = 'utf8'
+        dfs = pd.read_html(io.StringIO(r.text))
+        for df in dfs:
+            if len(df.columns) >= 2:
+                rev, gp, op, nonop, pretax, eps = 0, 0, 0, 0, 0, 0
+                for _, row in df.iterrows():
+                    item = str(row.iloc[0]).replace(' ', '').replace('　', '')
+                    val_str = str(row.iloc[1]).replace(',', '')
+                    if val_str == 'nan' or val_str == 'None' or not val_str: continue
+                    if val_str.startswith('('): val_str = '-' + val_str[1:-1]
+                    try: val = float(val_str)
+                    except: continue
+
+                    if '營業收入合計' in item or item == '營業收入' or '淨收益' in item:
+                        if rev == 0: rev = val
+                    elif ('營業毛利' in item or '毛損' in item) and '未實現' not in item:
+                        if '淨額' in item: gp = val
+                        elif gp == 0: gp = val
+                    elif '營業利益' in item or '營業損失' in item:
+                        if op == 0: op = val
+                    elif '營業外收入及支出' in item:
+                        if nonop == 0: nonop = val
+                    elif '稅前淨利' in item or '稅前損益' in item:
+                        if pretax == 0: pretax = val
+                    elif '基本每股盈餘' in item:
+                        if eps == 0: eps = val
                 
-                is_data = result.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
-                if not is_data: continue
-                
-                latest_q = is_data[0]
-                rev = latest_q.get('totalRevenue', {}).get('raw', 0)
-                gp = latest_q.get('grossProfit', {}).get('raw', 0)
-                op = latest_q.get('operatingIncome', {}).get('raw', 0)
-                
-                gm = (gp / rev) * 100 if rev > 0 else 0
-                om = (op / rev) * 100 if rev > 0 else 0
-                
-                q_eps = 0.0
-                acc_eps = 0.0
-                
-                eh_data = result.get('earningsHistory', {}).get('history', [])
-                if eh_data:
-                    valid_eps = [q.get('epsActual', {}).get('raw', 0) for q in eh_data if q.get('epsActual', {}).get('raw') is not None]
-                    if valid_eps:
-                        q_eps = valid_eps[0] # 最近一季 EPS
-                        acc_eps = sum(valid_eps) # 累計 EPS (簡單加總近四季)
-                
-                return gm, om, q_eps, acc_eps
-        except: pass
-    return None, None, None, None
+                if rev != 0:
+                    return {"rev": rev, "gp": gp, "op": op, "nonop": nonop, "pretax": pretax, "eps": eps}
+    except: pass
+    return None
 
 # ==========================================
 # 📊 核心大腦一：一般/成長股預估引擎
@@ -397,9 +398,10 @@ if is_admin:
                         else: status.update(label=f"⚠️ 無法更新", state="error", expanded=True)
             except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(e)
 
+    # 💡 V150 防禦機制：極速清洗站只新增，絕對不覆蓋舊有的毛利！
     target_q = st.sidebar.text_input("季報前綴 (如: 25Q4)", value="25Q4")
     if st.sidebar.button("⚡ 3️⃣ 季報極速 API 清洗站 (全市場)", type="primary", use_container_width=True):
-        with st.status("執行極速全市場清洗...", expanded=True) as status:
+        with st.status("執行極速全市場清洗 (保護毛利不覆蓋)...", expanded=True) as status:
             try:
                 y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
                 headers = {'User-Agent': 'Mozilla/5.0'}
@@ -428,17 +430,16 @@ if is_admin:
                     has_eps = eps_raw != 0.0
 
                     rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
+                    gp = ext_val(item, ['營業毛利', '毛損', '毛利'], ex=['未實現'])
                     op = ext_val(item, ['營業利益', '營業損失', '營業損益'])
                     nonop = ext_val(item, ['營業外'])
                     pretax = ext_val(item, ['稅前淨利', '稅前損益', '稅前'])
 
-                    # 保留合併財報最大營收
                     if code in curr_dict and rev <= curr_dict[code]["rev"]: continue
-                    curr_dict[code] = {"rev": rev, "op": op, "nonop": nonop, "pretax": pretax, "eps": eps_raw, "has_eps": has_eps}
+                    curr_dict[code] = {"rev": rev, "gp": gp, "op": op, "nonop": nonop, "pretax": pretax, "eps": eps_raw, "has_eps": has_eps}
 
                 if not curr_dict: status.update(label="⚠️ 官方目前無此季資料", state="error")
                 else:
-                    st.write("2️⃣ 正在精準寫入試算表...")
                     worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
                     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
                     cnt = 0
@@ -476,23 +477,27 @@ if is_admin:
                                         if i_ae != -1: cells.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps"], 2)))
                                         
                                     if curr["rev"] > 0:
-                                        if curr["op"] != 0 and i_om != -1: cells.append(gspread.Cell(row=r+1, col=i_om+1, value=round((curr["op"]/curr["rev"])*100, 2)))
-                                        elif i_om != -1: cells.append(gspread.Cell(row=r+1, col=i_om+1, value=""))
-                                        if i_om_q != -1: cells.append(gspread.Cell(row=r+1, col=i_om_q+1, value=""))
-                                        if i_gm != -1: cells.append(gspread.Cell(row=r+1, col=i_gm+1, value=""))
-                                        if i_gm_q != -1: cells.append(gspread.Cell(row=r+1, col=i_gm_q+1, value=""))
+                                        # 🛡️ 絕對防禦機制：如果有毛利才寫，沒毛利「絕對不寫入空白」，避免蓋掉辛苦補齊的數據！
+                                        if curr["gp"] != 0 and i_gm != -1: 
+                                            cells.append(gspread.Cell(row=r+1, col=i_gm+1, value=round((curr["gp"]/curr["rev"])*100, 2)))
+                                            if i_gm_q != -1: cells.append(gspread.Cell(row=r+1, col=i_gm_q+1, value=""))
+                                            
+                                        if curr["op"] != 0 and i_om != -1: 
+                                            cells.append(gspread.Cell(row=r+1, col=i_om+1, value=round((curr["op"]/curr["rev"])*100, 2)))
+                                            if i_om_q != -1: cells.append(gspread.Cell(row=r+1, col=i_om_q+1, value=""))
                                         
                                     if curr["pretax"] != 0 and i_no != -1:
                                         cells.append(gspread.Cell(row=r+1, col=i_no+1, value=round((curr["nonop"]/curr["pretax"])*100, 2)))
                             if cells: ws.update_cells(cells); cnt += len(cells)
-                    status.update(label=f"🎉 快速大掃除完成！共更新 {cnt} 格 (請執行第4步補齊毛利)", state="complete")
+                    status.update(label=f"🎉 快速大掃除完成！共更新 {cnt} 格 (請放心，不會蓋掉原有毛利)", state="complete")
                     st.cache_data.clear()
             except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
 
-    # 💡 V149 核心：自動掃描缺漏並連線 Yahoo 國際通道填補
-    if st.sidebar.button("⚡ 4️⃣ 季報缺件補完 (Yahoo 直連)", type="secondary", use_container_width=True):
-        with st.status("掃描全表缺漏，啟動 Yahoo 智能修復...", expanded=True) as status:
+    # 💡 V150 終極引擎：捨棄 Yahoo，回歸最強 MOPS 個別財報補漏 (算出純單季)
+    if st.sidebar.button("⚡ 4️⃣ 季報缺件補完 (專補信邦/德律)", type="secondary", use_container_width=True):
+        with st.status("掃描全表缺漏，啟動 MOPS 個別財報單季還原...", expanded=True) as status:
             try:
+                y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
                 worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
                 target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
                 total_fixed = 0
@@ -508,13 +513,16 @@ if is_admin:
                     i_om = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x).replace(' ','') and "增" not in str(x)), -1)
                     i_gm_q = next((i for i, x in enumerate(h) if "最新單季毛利率季增" in str(x).replace(' ','')), -1)
                     i_om_q = next((i for i, x in enumerate(h) if "最新單季營益率季增" in str(x).replace(' ','')), -1)
+                    i_q1 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
+                    i_q2 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
+                    i_q3 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q3單季每股盈餘" in str(x).replace(' ','')), -1)
                     
                     if i_c != -1 and i_e != -1:
                         cells_to_update = []
                         missing_codes = []
                         row_map = {}
                         
-                        # 依據指揮官指示：EPS 空白或是毛利空白的，通通列入補漏清單
+                        # 1. 找出有 EPS 但毛利空白的，或是連 EPS 都是空白的
                         for r, row in enumerate(data):
                             if r == 0: continue
                             code = str(row[i_c]).split('.')[0].strip()
@@ -526,34 +534,64 @@ if is_admin:
                                 row_map[code] = r + 1
                         
                         if missing_codes:
-                            # 🛡️ 防護網：避免一次掃 1900 檔被 Yahoo 封鎖
-                            if len(missing_codes) > 200:
-                                st.warning(f"⚠️ {ws.title} 發現 {len(missing_codes)} 檔缺件！為避免封鎖，請先執行「3️⃣ 季報極速 API 清洗站」。")
-                                missing_codes = missing_codes[:50]
+                            # 防護網：避免一次掃 1900 檔被封鎖
+                            if len(missing_codes) > 100:
+                                st.warning(f"⚠️ {ws.title} 發現過多缺件！為避免封鎖，請先確認第3步 API 清洗是否成功。")
+                                missing_codes = missing_codes[:20]
                                 
-                            st.write(f"在 {ws.title} 發現 {len(missing_codes)} 檔缺件，向 Yahoo 索取最新單季數據...")
+                            st.write(f"在 {ws.title} 發現 {len(missing_codes)} 檔缺件，啟動單季還原演算法...")
                             for code in missing_codes:
-                                gm, om, q_eps, acc_eps = get_yahoo_full_financials(code)
-                                if gm is not None:
-                                    r_idx = row_map[code]
-                                    if q_eps and q_eps != 0: cells_to_update.append(gspread.Cell(row=r_idx, col=i_e+1, value=round(q_eps, 2)))
-                                    if acc_eps and acc_eps != 0 and i_ae != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_ae+1, value=round(acc_eps, 2)))
-                                    if i_gm != -1 and gm != 0: 
-                                        cells_to_update.append(gspread.Cell(row=r_idx, col=i_gm+1, value=round(gm, 2)))
-                                        if i_gm_q != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_gm_q+1, value=""))
-                                    if i_om != -1 and om != 0: 
-                                        cells_to_update.append(gspread.Cell(row=r_idx, col=i_om+1, value=round(om, 2)))
-                                        if i_om_q != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_om_q+1, value=""))
-                                    total_fixed += 1
-                                    time.sleep(0.1) # 溫和爬取
+                                # 💡 抓取 Q4 累計
+                                q4_data = get_mops_single_ytd(code, y_roc, q_num)
+                                if q4_data:
+                                    # 💡 抓取 Q3 累計
+                                    q3_data = get_mops_single_ytd(code, y_roc, q_num - 1) if q_num > 1 else {"rev":0, "gp":0, "op":0, "eps":0}
+                                    if not q3_data: q3_data = {"rev":0, "gp":0, "op":0, "eps":0}
+                                    
+                                    # 🧮 Goodinfo 級還原演算法： Q4 - Q3
+                                    sq_rev = q4_data['rev'] - q3_data['rev']
+                                    sq_gp = q4_data['gp'] - q3_data['gp']
+                                    sq_op = q4_data['op'] - q3_data['op']
+                                    
+                                    if sq_rev > 0:
+                                        gm = (sq_gp / sq_rev) * 100
+                                        om = (sq_op / sq_rev) * 100
+                                        
+                                        # 防爆保險絲：如果重編導致異常，改用 Q4 累計平均
+                                        if not (-100 <= gm <= 100) and q4_data['rev'] > 0: gm = (q4_data['gp'] / q4_data['rev']) * 100
+                                        if not (-100 <= om <= 100) and q4_data['rev'] > 0: om = (q4_data['op'] / q4_data['rev']) * 100
+                                        
+                                        r_idx = row_map[code]
+                                        
+                                        # EPS 單季還原 (用 Q4累計 - 表單前三季)
+                                        f_eps = q4_data['eps']
+                                        row_data = data[r_idx - 1]
+                                        try:
+                                            if q_num == 4 and i_q1!=-1 and i_q2!=-1 and i_q3!=-1: f_eps -= (float(row_data[i_q1] or 0) + float(row_data[i_q2] or 0) + float(row_data[i_q3] or 0))
+                                            elif q_num == 3 and i_q1!=-1 and i_q2!=-1: f_eps -= (float(row_data[i_q1] or 0) + float(row_data[i_q2] or 0))
+                                            elif q_num == 2 and i_q1!=-1: f_eps -= float(row_data[i_q1] or 0)
+                                        except: pass
+                                        
+                                        cells_to_update.append(gspread.Cell(row=r_idx, col=i_e+1, value=round(f_eps, 2)))
+                                        if i_ae != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_ae+1, value=round(q4_data['eps'], 2)))
+                                        
+                                        if i_gm != -1: 
+                                            cells_to_update.append(gspread.Cell(row=r_idx, col=i_gm+1, value=round(gm, 2)))
+                                            if i_gm_q != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_gm_q+1, value=""))
+                                        if i_om != -1: 
+                                            cells_to_update.append(gspread.Cell(row=r_idx, col=i_om+1, value=round(om, 2)))
+                                            if i_om_q != -1: cells_to_update.append(gspread.Cell(row=r_idx, col=i_om_q+1, value=""))
+                                            
+                                        total_fixed += 1
+                                        time.sleep(0.5) # 溫和爬取，避免被 MOPS 封鎖
                         
                         if cells_to_update: ws.update_cells(cells_to_update)
                 
                 if total_fixed > 0:
-                    status.update(label=f"🎉 智能補漏完成！成功修復了 {total_fixed} 檔股票的財報！", state="complete")
+                    status.update(label=f"🎉 智能補漏完成！成功算出 {total_fixed} 檔股票的純單季數據！", state="complete")
                     st.cache_data.clear(); st.balloons()
                 else:
-                    status.update(label=f"✅ 掃描完畢，目前表單無需補漏或 Yahoo 尚無資料。", state="complete")
+                    status.update(label=f"✅ 掃描完畢，目前表單無需補漏。", state="complete")
             except Exception as e: status.update(label="補漏中斷", state="error"); st.error(e)
 
 # ==========================================
