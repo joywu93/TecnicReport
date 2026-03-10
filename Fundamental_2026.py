@@ -322,4 +322,51 @@ simulated_month = st.sidebar.slider("月份推演 (檢視當下戰情)", 1, 12, 
 
 st.sidebar.divider()
 st.sidebar.header("👤 帳號登入")
-user_
+user_email = st.sidebar.text_input("請輸入您的 Email", placeholder="輸入信箱載入專屬清單...")
+
+current_user = user_email.strip().lower() if user_email else ""
+is_admin = False 
+user_vip_list, user_row_idx, sheet_auth = "", None, None
+
+if user_email and "google_key" in st.secrets:
+    try:
+        client = get_gspread_client()
+        sheet_auth = client.open_by_url(MASTER_GSHEET_URL).worksheet("權限管理")
+        auth_data = sheet_auth.get_all_records()
+        for i, row in enumerate(auth_data):
+            if str(row.get('Email', '')).strip().lower() == current_user:
+                user_vip_list = str(row.get('VIP清單', ''))
+                user_row_idx = i + 2
+                if str(row.get('管理員', '')).strip() in ['是', '可', 'V', '1', 'true', 'yes', 'Y', 'y']: is_admin = True
+                break
+        if user_row_idx: st.sidebar.success(f"✅ 歡迎！{' (👑 管理員)' if is_admin else ''}")
+        else: st.sidebar.info("👋 輸入清單後儲存即可建立帳號。")
+    except Exception as e: st.sidebar.error("❌ 連線失敗。")
+
+watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單", value=user_vip_list if user_vip_list else "2330, 2317, 3023", height=100)
+if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondary") and sheet_auth:
+    with st.spinner("寫入中..."):
+        if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
+        else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
+        st.rerun()
+
+# ==========================================
+# 🌟 引擎：官方自動更新專區 
+# ==========================================
+if is_admin:
+    st.sidebar.divider()
+    st.sidebar.markdown("### 🤖 大數據自動更新中心")
+    
+    if st.sidebar.button("⚡ 1️⃣ 盤後股價更新", type="primary", use_container_width=True):
+        with st.status("連線官方伺服器...", expanded=True) as status:
+            try:
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, verify=False, timeout=10).json()
+                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers, verify=False, timeout=10).json()
+                price_dict = {str(i.get('Code', '')).strip(): float(i.get('ClosingPrice', '0').replace(',', '')) for i in res_twse if i.get('ClosingPrice')}
+                price_dict.update({str(i.get('SecuritiesCompanyCode', '')).strip(): float(i.get('Close', '0').replace(',', '')) for i in res_tpex if i.get('Close')})
+                
+                if not price_dict: status.update(label="⚠️ 無法取得報價。", state="error")
+                else:
+                    worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
+                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
