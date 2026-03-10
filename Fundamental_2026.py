@@ -46,7 +46,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V126 金融直出解鎖版)")
+st.title("📊 2026 戰略指揮 (V127 官方季報全自動版)")
 
 def get_realtime_price(code, default_price):
     try:
@@ -64,7 +64,7 @@ def get_realtime_price(code, default_price):
     for sfx in ['.TW', '.TWO']:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{sfx}"
-            res = requests.get(url, headers=headers, timeout=2).json()
+            res = requests.get(url, headers=headers, timeout=2, verify=False).json()
             p = res['chart']['result'][0]['meta']['regularMarketPrice']
             if p and p > 0: return float(p)
         except: pass
@@ -171,7 +171,6 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     else:
         forward_yield = 0
         
-    # 💡 V126: 新增提取 原始PER 與 年化殖利率，並將本益比更名為前瞻PER
     return {
         "股票名稱": f"{code} {data['name']}",
         "最新股價": round(current_price, 2),
@@ -235,8 +234,6 @@ def load_google_sheet_data():
             
             c_pbr = get_col("PBR") or get_col("淨值比")
             c_div_years = get_col("連配次數") or get_col("連續配發") or get_col("次數")
-            
-            # 💡 V126: 精準抓取 原始PER 與 年化殖利率 欄位
             c_orig_per = get_col_exact("PER") or get_col("PER", excludes=["前瞻", "預估", "均"])
             c_annual_yield = get_col("年化合計殖利率") or get_col("年化", "殖利率") or get_col("成交價年化合計殖利率")
             
@@ -269,7 +266,6 @@ def load_google_sheet_data():
                 
                 rev_q4 = get_val(c_ly_q4) or (get_val(c_rev_10) + get_val(c_rev_last_11) + get_val(c_rev_last_12))
                 eps_q3, eps_q4, rev_q3 = get_val(c_eps_q3), get_val(c_eps_q4), get_val(c_ly_q3)
-                
                 base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
 
                 db[code] = {
@@ -355,11 +351,14 @@ if user_email and "google_key" in st.secrets:
                 except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
 
 # ==========================================
-# 🌟 引擎一：月營收與股價自動更新 
+# 🌟 引擎：官方自動更新專區 (僅管理員可見)
 # ==========================================
 if is_admin:
     st.sidebar.divider()
     
+    # ------------------
+    # 1. 股價更新
+    # ------------------
     with st.sidebar.expander("🤖 盤後股價自動更新 (官方資料)"):
         st.markdown("💡 每日盤後一鍵抓取收盤價，寫入「個股總表」與「金融股」的成交欄位。")
         if st.button("⚡ 一鍵更新全市場股價", type="primary", use_container_width=True):
@@ -423,12 +422,14 @@ if is_admin:
                         status.update(label="任務中斷", state="error", expanded=True)
                         st.error(f"❌ 錯誤說明：{e}")
 
+    # ------------------
+    # 2. 月營收更新
+    # ------------------
     with st.sidebar.expander("🤖 月營收自動更新 (官方資料)"):
         now = datetime.now()
         lm_month, lm_year = now.month - 1, now.year
         if lm_month == 0: lm_month, lm_year = 12, lm_year - 1
         default_target_ym = f"{str(lm_year)[-2:]}M{str(lm_month).zfill(2)}"
-        
         auto_ym = st.text_input("設定欲更新的營收年月標題 (如: 26M03)", value=default_target_ym)
         
         if st.button("⚡ 一鍵更新營收至試算表", type="primary"):
@@ -522,6 +523,129 @@ if is_admin:
                                 else: status.update(label=f"⚠️ 無法更新。請確保試算表中有欄位標題為『{target_m_header}單月營收(億)』", state="error", expanded=True)
                     except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
+    # ------------------
+    # 💡 3. V127 全新加入：官方季報自動清洗寫入機器人
+    # ------------------
+    with st.sidebar.expander("🤖 季報自動更新 (官方資料)"):
+        st.markdown("💡 抓取官方『綜合損益表』，自動清洗計算 Q4 單季 EPS、毛利率、營益率、業外佔比，並一鍵寫入所有表單。")
+        target_q = st.text_input("輸入欲更新的季報欄位前綴 (如: 25Q4)", value="25Q4")
+        
+        if st.button("⚡ 一鍵更新官方季報", type="primary", use_container_width=True):
+            if "google_key" not in st.secrets: st.error("❌ 找不到金鑰！")
+            else:
+                with st.status("啟動官方財報清洗機器人...", expanded=True) as status:
+                    try:
+                        headers_agent = {'User-Agent': 'Mozilla/5.0'}
+                        
+                        st.write("1️⃣ 正在從官方 Open API 撈取上市櫃綜合損益表...")
+                        # 官方綜合損益表 API
+                        res_twse_q = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers_agent, verify=False, timeout=15).json()
+                        res_tpex_q = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers_agent, verify=False, timeout=15).json()
+                        
+                        # 建立財報字典
+                        fs_dict = {}
+                        for item in (res_twse_q + res_tpex_q):
+                            code = str(item.get('公司代號', '')).strip()
+                            if not code: continue
+                            
+                            def s2f(val):
+                                try: return float(str(val).replace(',', '').strip())
+                                except: return 0.0
+                                
+                            fs_dict[code] = {
+                                "revenue": s2f(item.get('營業收入', 0)),
+                                "gross_profit": s2f(item.get('營業毛利（毛損）淨額', 0) or item.get('營業毛利（毛損）', 0)),
+                                "op_profit": s2f(item.get('營業利益（損失）', 0)),
+                                "non_op": s2f(item.get('營業外收入及支出', 0)),
+                                "pre_tax": s2f(item.get('稅前淨利（淨損）', 0)),
+                                "eps": s2f(item.get('基本每股盈餘（元）', 0)),
+                                "is_q4": str(item.get('季別', '')) == '4'
+                            }
+
+                        st.write("2️⃣ 正在讀取並比對您的 Google 試算表資料...")
+                        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+                        creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"]), scopes=scopes)
+                        client = gspread.authorize(creds)
+                        worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
+                        target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                        
+                        total_cells_updated = 0
+                        for ws in target_sheets:
+                            all_data = ws.get_all_values()
+                            if not all_data: continue
+                            headers = all_data[0]
+                            
+                            # 尋找目標欄位位置
+                            idx_code = -1
+                            idx_target_eps = -1
+                            idx_acc_eps = -1
+                            idx_gm, idx_om, idx_nonop = -1, -1, -1
+                            
+                            # 前三季EPS欄位 (用來扣除算Q4)
+                            idx_q1, idx_q2, idx_q3 = -1, -1, -1
+                            target_year = target_q[:2] # "25"
+                            
+                            for i, h in enumerate(headers):
+                                clean_h = str(h).replace('\n', '').replace(' ', '').strip()
+                                if "代號" in clean_h: idx_code = i + 1
+                                elif f"{target_q}單季每股盈餘" in clean_h: idx_target_eps = i + 1
+                                elif "最新累季每股盈餘" in clean_h or "最新累季EPS" in clean_h: idx_acc_eps = i + 1
+                                elif "最新單季毛利率" in clean_h and "增" not in clean_h: idx_gm = i + 1
+                                elif "最新單季營益率" in clean_h and "增" not in clean_h: idx_om = i + 1
+                                elif "業外損益佔" in clean_h: idx_nonop = i + 1
+                                
+                                elif f"{target_year}Q1單季每股盈餘" in clean_h: idx_q1 = i + 1
+                                elif f"{target_year}Q2單季每股盈餘" in clean_h: idx_q2 = i + 1
+                                elif f"{target_year}Q3單季每股盈餘" in clean_h: idx_q3 = i + 1
+                                
+                            if idx_code != -1 and idx_target_eps != -1:
+                                cells_to_update = []
+                                for row_i, row in enumerate(all_data):
+                                    if row_i == 0: continue
+                                    code = str(row[idx_code-1]).split('.')[0].strip()
+                                    if code in fs_dict:
+                                        fs = fs_dict[code]
+                                        
+                                        # 1. 處理 EPS
+                                        final_q_eps = fs["eps"]
+                                        if fs["is_q4"] and idx_q1!=-1 and idx_q2!=-1 and idx_q3!=-1:
+                                            # Q4 官方給的是全年，必須扣除前三季
+                                            try:
+                                                v1 = float(str(row[idx_q1-1]).replace(',', '').strip() or 0)
+                                                v2 = float(str(row[idx_q2-1]).replace(',', '').strip() or 0)
+                                                v3 = float(str(row[idx_q3-1]).replace(',', '').strip() or 0)
+                                                final_q_eps = fs["eps"] - v1 - v2 - v3
+                                            except: pass
+                                            
+                                        cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_target_eps, value=round(final_q_eps, 2)))
+                                        if idx_acc_eps != -1: 
+                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_acc_eps, value=round(fs["eps"], 2)))
+                                            
+                                        # 2. 處理三率 (金融股可能 revenue=0 或無毛利)
+                                        if fs["revenue"] > 0:
+                                            if idx_gm != -1:
+                                                gm = (fs["gross_profit"] / fs["revenue"]) * 100
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_gm, value=round(gm, 2)))
+                                            if idx_om != -1:
+                                                om = (fs["op_profit"] / fs["revenue"]) * 100
+                                                cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_om, value=round(om, 2)))
+                                                
+                                        if fs["pre_tax"] != 0 and idx_nonop != -1:
+                                            nonop_ratio = (fs["non_op"] / fs["pre_tax"]) * 100
+                                            cells_to_update.append(gspread.Cell(row=row_i+1, col=idx_nonop, value=round(nonop_ratio, 2)))
+                                
+                                if cells_to_update:
+                                    st.write(f"寫入 {ws.title} ...")
+                                    ws.update_cells(cells_to_update)
+                                    total_cells_updated += len(cells_to_update)
+                                    
+                        status.update(label=f"🎉 財報更新大成功！共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
+                        st.cache_data.clear() 
+                        st.balloons()
+                    except Exception as e:
+                        status.update(label="任務中斷", state="error", expanded=True)
+                        st.error(f"❌ 錯誤說明：{e}")
+
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
@@ -529,7 +653,6 @@ if cached_data:
     stock_db_general = cached_data.get("general", {})
     stock_db_finance = cached_data.get("finance", {})
 
-    # 💡 V126: 將「金融存股雷達」開放給所有使用者(含晚輩)！
     if is_admin:
         tabs = st.tabs(["🎯 專屬戰略指揮 (VIP清單)", "🔍 成長戰略雷達 (電子/傳產)", "🏦 金融存股雷達 (防禦配置)"])
         tab_vip, tab_radar, tab_fin = tabs[0], tabs[1], tabs[2]
@@ -573,10 +696,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v126"] = pd.DataFrame(results)
+                st.session_state["df_final_v127"] = pd.DataFrame(results)
 
-        if "df_final_v126" in st.session_state:
-            df = st.session_state["df_final_v126"].copy()
+        if "df_final_v127" in st.session_state:
+            df = st.session_state["df_final_v127"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
@@ -746,7 +869,7 @@ if cached_data:
                         st.dataframe(radar_df.style.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.15)']*len(x), axis=1).format(format_dict), height=600, use_container_width=True)
 
     # ----------------------------
-    # Tab 3: 🏦 金融防禦存股雷達 (V126 直出排名解鎖版)
+    # Tab 3: 🏦 金融防禦存股雷達
     # ----------------------------
     if tab_fin is not None:
         with tab_fin:
@@ -755,7 +878,6 @@ if cached_data:
             st.markdown("🥇 **黃金排序法則：** 1. 股價淨值比(低到高) ➔ 2. 前瞻殖利率(高到低) ➔ 3. 連配次數(高到低)")
             st.markdown("---")
 
-            # 💡 V126 拔除按鈕與過濾器，直接讀取計算並顯示
             fin_results = []
             
             for code, data in stock_db_finance.items():
@@ -766,9 +888,7 @@ if cached_data:
                     data=data, simulated_month=simulated_month
                 )
                 
-                # 剔除資料不全的異常股
                 if res["PBR(股價淨值比)"] <= 0: continue
-                
                 fin_results.append(res)
                     
             if not fin_results:
@@ -776,13 +896,11 @@ if cached_data:
             else:
                 fin_df = pd.DataFrame(fin_results)
                 
-                # 嚴格執行排序法
                 fin_df = fin_df.sort_values(
                     by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], 
                     ascending=[True, False, False]
                 )
                 
-                # 💡 V126: 重新排列欄位，新增原始PER與年化殖利率
                 fin_df = fin_df[[
                     "股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", 
                     "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", 
@@ -799,7 +917,6 @@ if cached_data:
                     "運算配息率(%)": "{:.2f}%", "當季預估均營收(億)": "{:.2f}"
                 }
                 
-                # 同時標亮高前瞻殖利率與高年化殖利率
                 def highlight_fin_yield(val): return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 5.0 else ''
                 
                 st.dataframe(
