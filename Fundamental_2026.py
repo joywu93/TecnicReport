@@ -584,4 +584,45 @@ if cached_data:
 
     if t_radar:
         with t_radar:
-            st.
+            st.markdown("##### 🚀 成長動能條件")
+            s1 = st.checkbox("☑️ 策略一：年底升溫")
+            s2 = st.checkbox("☑️ 策略二：淡季突破")
+            s3 = st.checkbox("☑️ 策略三：Q2大爆發")
+            c_r1, c_r2 = st.columns(2)
+            with c_r1:
+                f_grow = st.slider("穩健成長 (年增率 > %)", -10, 100, 10)
+                f_per = st.slider("便宜價 (本益比 <)", 5, 50, 50)
+            with c_r2: f_y = st.slider("高殖利率 (大於 %)", 0.0, 15.0, 4.0)
+            
+            ex_kws = st.text_input("🚫 排除關鍵字 (如: KY, 航運)")
+            
+            if st.button("📡 全市場掃描", type="primary"):
+                with st.spinner("掃描中..."):
+                    kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
+                    res_list = []
+                    for code, d in db_gen.items():
+                        if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
+                        r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0))
+                        
+                        ly_q1_avg, ly_q2 = r["_ly_qs"][0]/3, r["_ly_qs"][1]
+                        ly_11_12_avg = r["_total_est_qs"][0]/3 
+                        est_q1 = r["當季預估均營收"] * 3
+                        est_q2, est_q2_avg = r["_total_est_qs"][1], r["_total_est_qs"][1]/3
+                        best_q1_avg = (r["_known_qs"][0] if simulated_month >= 4 else est_q1)/3
+
+                        if s1 and not (ly_11_12_avg > ly_q1_avg): continue
+                        if s2 and not (est_q1 > ly_q2): continue
+                        if s3 and not (est_q2_avg >= best_q1_avg and est_q2 > ly_q2): continue
+                        if r["預估年成長率(%)"] < f_grow or (f_y > 0 and r["前瞻殖利率(%)"] < f_y) or (f_per < 50 and (r["本益比(PER)"] <= 0 or r["本益比(PER)"] > f_per)): continue
+                        res_list.append(r)
+                    if not res_list: st.warning("無符合條件股票")
+                    else: st.success(f"命中 {len(res_list)} 檔！"); render_dataframe(pd.DataFrame(res_list).sort_values(by=['前瞻殖利率(%)', '季成長率(YoY)%'], ascending=[False, False]))
+
+    with t_fin:
+        if st.button("🛡️ 啟動金融掃描", type="primary"):
+            with st.spinner("篩選中..."):
+                res_list = [financial_strategic_model(d["name"], c.strip(), simulated_month, d, simulated_month) for c, d in db_fin.items() if d.get("pbr",0) > 0]
+                if not res_list: st.warning("無符合條件的金融股")
+                else: render_dataframe(pd.DataFrame(res_list).sort_values(by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], ascending=[True, False, False]), is_finance=True)
+
+# ✅ 程式碼完整結束
