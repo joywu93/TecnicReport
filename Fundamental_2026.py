@@ -46,9 +46,8 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V138 底層封裝精簡版)")
+st.title("📊 2026 戰略指揮 (V139 終極排除避坑版)")
 
-# 💡 V138 新增：將 Google 認證打包成共用模組，精簡程式碼長度防止截斷
 def get_gspread_client():
     if "google_key" not in st.secrets:
         raise ValueError("找不到 Google 金鑰 (google_key)")
@@ -508,14 +507,14 @@ if is_admin:
                 except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(f"❌ 錯誤說明：{e}")
 
     # ------------------
-    # 💡 3. V138 季報清洗站 (會計重構引擎)
+    # 💡 3. V139 季報清洗站 (終極排除黑名單引擎)
     # ------------------
     with st.sidebar.expander("🤖 季報自動更新 (官方資料)"):
-        st.markdown("💡 搭載 V138 會計重構引擎：如果官方缺失毛利欄位，機器人會啟動【營收 - 成本】強制還原。")
+        st.markdown("💡 搭載 V139 終極黑名單引擎：強制排除『未實現』干擾項，精準鎖定最真實的毛利率！")
         target_q = st.text_input("輸入欲更新的季報欄位前綴 (如: 25Q4)", value="25Q4")
         
         if st.button("⚡ 一鍵洗淨並更新季報", type="primary", use_container_width=True):
-            with st.status("啟動 V138 終極會計重構引擎...", expanded=True) as status:
+            with st.status("啟動 V139 終極黑名單防護引擎...", expanded=True) as status:
                 try:
                     try:
                         target_year_roc = str((2000 + int(target_q[:2])) - 1911) 
@@ -531,37 +530,22 @@ if is_admin:
                     
                     curr_dict = {}
                     
-                    # 💡 終極透視函數
-                    def extract_val(item_dict, keywords, default=0.0):
+                    # 💡 V139 終極黑名單函數：加上 excludes，遇到未實現直接拉黑！
+                    def extract_val(item_dict, keywords, excludes=None, default=0.0):
+                        if excludes is None: excludes = []
                         def clean(s): return str(s).replace(' ', '').replace('（', '(').replace('）', '')
                         
                         for kw in keywords:
                             for k, v in item_dict.items():
                                 ck = clean(k)
-                                if kw in ck and '淨額' in ck:
+                                if kw in ck:
+                                    # 🛑 黑名單啟動：如果欄位包含未實現，直接跳過！
+                                    if any(ex in ck for ex in excludes):
+                                        continue
                                     val_str = str(v).strip()
                                     if val_str and val_str not in ['0', '0.00', 'None']:
                                         try: return float(val_str.replace(',', ''))
                                         except: pass
-                                        
-                        for kw in keywords:
-                            for k, v in item_dict.items():
-                                ck = clean(k)
-                                if kw in ck:
-                                    val_str = str(v).strip()
-                                    if val_str and val_str not in ['0', '0.00', 'None']:
-                                        try: return float(val_str.replace(',', ''))
-                                        except: pass
-
-                        for kw in keywords:
-                            for k, v in item_dict.items():
-                                ck = clean(k)
-                                if kw in ck:
-                                    val_str = str(v).strip()
-                                    if val_str != 'None':
-                                        try: return float(val_str.replace(',', ''))
-                                        except: pass
-                                        
                         return default
 
                     for item in (res_twse_q + res_tpex_q):
@@ -576,13 +560,13 @@ if is_admin:
                         eps_str = str(eps_raw if eps_raw is not None else '').strip()
                         has_eps = bool(eps_str) and eps_str != 'None' and eps_str != ''
 
-                        # 💡 V138 會計學重構
-                        rev = extract_val(item, ['營業收入', '淨收益', '收益'])
-                        gp = extract_val(item, ['營業毛利', '毛損'])
+                        # 💡 嚴格定義：毛利必須排除「未實現」！
+                        rev = extract_val(item, ['營業收入淨額', '營業收入', '淨收益', '收益'])
+                        gp = extract_val(item, ['營業毛利(毛損)淨額', '已實現營業毛利', '營業毛利', '毛損'], excludes=['未實現'])
                         cost = extract_val(item, ['營業成本', '業務成本'])
                         op = extract_val(item, ['營業利益', '營業損失'])
                         exp = extract_val(item, ['營業費用', '業務費用'])
-                        nonop = extract_val(item, ['營業外'])
+                        nonop = extract_val(item, ['營業外收入及支出', '營業外'])
                         pretax = extract_val(item, ['稅前淨利', '稅前損益', '稅前'])
                         
                         if gp == 0 and rev > 0 and cost > 0: gp = rev - cost
@@ -675,7 +659,7 @@ if is_admin:
                                     ws.update_cells(cells_to_update)
                                     total_cells_updated += len(cells_to_update)
                                     
-                        status.update(label=f"🎉 V138 會計重構完成！已精準抓出毛利率，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
+                        status.update(label=f"🎉 V139 黑名單防護完成！成功突破未實現陷阱，共更新 {total_cells_updated} 個儲存格！", state="complete", expanded=False)
                         st.cache_data.clear() 
                         st.balloons()
                 except Exception as e:
@@ -732,10 +716,10 @@ if cached_data:
             if found_count == 0:
                 st.warning("您關注的股票清單與試算表資料未能對應，請檢查代號是否正確。")
             elif results: 
-                st.session_state["df_final_v138"] = pd.DataFrame(results)
+                st.session_state["df_final_v139"] = pd.DataFrame(results)
 
-        if "df_final_v138" in st.session_state:
-            df = st.session_state["df_final_v138"].copy()
+        if "df_final_v139" in st.session_state:
+            df = st.session_state["df_final_v139"].copy()
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"### 🎯 數據特寫", unsafe_allow_html=True)
