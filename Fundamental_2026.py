@@ -43,7 +43,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V147 Yahoo單季直連版)")
+st.title("📊 2026 戰略指揮 (V149 終極雙引擎與圖表歸位版)")
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -70,28 +70,40 @@ def get_realtime_price(code, default_price):
         except: pass
     return default_price
 
-# 💡 V147 核心武器：Yahoo Finance 單季財報直連引擎
-def get_yahoo_quarterly_financials(code):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+# 💡 V149 核心：輕量級 Yahoo JSON 引擎 (同時抓取單季 EPS 與 毛利)
+def get_yahoo_full_financials(code):
+    headers = {'User-Agent': 'Mozilla/5.0'}
     for sfx in ['.TW', '.TWO']:
-        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{code}{sfx}?modules=incomeStatementHistoryQuarterly"
+        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{code}{sfx}?modules=incomeStatementHistoryQuarterly,earningsHistory"
         try:
             res = requests.get(url, headers=headers, timeout=5, verify=False).json()
             if res and res.get('quoteSummary', {}).get('result'):
-                # 獲取最新一季的損益表數據
-                q_data = res['quoteSummary']['result'][0].get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
-                if q_data:
-                    latest_q = q_data[0] # 取陣列中第一筆(最新一季)
-                    rev = latest_q.get('totalRevenue', {}).get('raw', 0)
-                    gp = latest_q.get('grossProfit', {}).get('raw', 0)
-                    op = latest_q.get('operatingIncome', {}).get('raw', 0)
-                    
-                    if rev > 0:
-                        gm = (gp / rev) * 100 if gp != 0 else 0
-                        om = (op / rev) * 100 if op != 0 else 0
-                        return gm, om
+                result = res['quoteSummary']['result'][0]
+                
+                is_data = result.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
+                if not is_data: continue
+                
+                latest_q = is_data[0]
+                rev = latest_q.get('totalRevenue', {}).get('raw', 0)
+                gp = latest_q.get('grossProfit', {}).get('raw', 0)
+                op = latest_q.get('operatingIncome', {}).get('raw', 0)
+                
+                gm = (gp / rev) * 100 if rev > 0 else 0
+                om = (op / rev) * 100 if rev > 0 else 0
+                
+                q_eps = 0.0
+                acc_eps = 0.0
+                
+                eh_data = result.get('earningsHistory', {}).get('history', [])
+                if eh_data:
+                    valid_eps = [q.get('epsActual', {}).get('raw', 0) for q in eh_data if q.get('epsActual', {}).get('raw') is not None]
+                    if valid_eps:
+                        q_eps = valid_eps[0] # 最近一季 EPS
+                        acc_eps = sum(valid_eps) # 累計 EPS (簡單加總近四季)
+                
+                return gm, om, q_eps, acc_eps
         except: pass
-    return None, None
+    return None, None, None, None
 
 # ==========================================
 # 📊 核心大腦一：一般/成長股預估引擎
@@ -277,7 +289,7 @@ if user_email and "google_key" in st.secrets:
         else: st.sidebar.info("👋 輸入清單後儲存即可建立帳號。")
     except Exception as e: st.sidebar.error("❌ 連線失敗。")
 
-watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單", value=user_vip_list if user_vip_list else "2330, 2317", height=100)
+watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單", value=user_vip_list if user_vip_list else "2330, 2317, 3023", height=100)
 if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondary") and sheet_auth:
     with st.spinner("寫入中..."):
         if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
@@ -289,7 +301,7 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
 # ==========================================
 if is_admin:
     st.sidebar.divider()
-    st.sidebar.markdown("### 🤖 官方大數據自動更新中心")
+    st.sidebar.markdown("### 🤖 大數據自動更新中心")
     
     if st.sidebar.button("⚡ 1️⃣ 盤後股價更新", type="primary", use_container_width=True):
         with st.status("連線官方伺服器...", expanded=True) as status:
@@ -341,285 +353,4 @@ if is_admin:
                                 r.encoding = 'big5' 
                                 for row in re.findall(r'<tr[^>]*>(.*?)</tr>', r.text, flags=re.I|re.S):
                                     cs = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row, flags=re.I|re.S)]
-                                    if len(cs) >= 7 and (m := re.search(r'(?<!\d)(\d{4})(?!\d)', cs[0])) and cln(cs[2]):
-                                        df_all_list.append({'公司代號': m.group(1), '當月營收': cln(cs[2]), '月增率': cln(cs[5]), '年增率': cln(cs[6]), '來源優先級': 2})
-                        except: pass
-                        try:
-                            r2 = requests.get(u+".csv", headers=headers, verify=False, timeout=8)
-                            if r2.status_code == 200:
-                                r2.encoding = 'big5' 
-                                df_gov = pd.read_csv(io.StringIO(r2.text), on_bad_lines='skip', header=None, dtype=str)
-                                h_idx = next((i for i in range(min(10, len(df_gov))) if '公司代號' in "".join([str(x) for x in df_gov.iloc[i]])), -1)
-                                if h_idx != -1:
-                                    df_gov.columns = [str(c).replace('\n', '').replace(' ', '').strip() for c in df_gov.iloc[h_idx]]
-                                    for _, row in df_gov.iloc[h_idx+1:].iterrows():
-                                        if '公司代號' in row and pd.notna(row['公司代號']):
-                                            df_all_list.append({'公司代號': str(row['公司代號']).strip(), '當月營收': cln(row.get('當月營收', '')), '月增率': cln(row.get('上月比較增減(%)', '')), '年增率': cln(row.get('去年同月增減(%)', '')), '來源優先級': 1})
-                        except: pass
-
-                    if not df_all_list: status.update(label=f"⚠️ 目前尚未公佈 {tm_h} 營收", state="error", expanded=True)
-                    else:
-                        df_early = pd.DataFrame(df_all_list).sort_values('來源優先級').drop_duplicates(subset=['公司代號']) 
-                        cnt = 0
-                        for ws in target_sheets:
-                            data = ws.get_all_values()
-                            if not data: continue
-                            h = data[0]
-                            target_col_idx, mom_col_idx, yoy_col_idx, code_col_idx = -1, -1, -1, -1
-                            for i, header in enumerate(h):
-                                clean_h = str(header).replace('\n', '').replace(' ', '').replace('\r', '').strip()
-                                if "代號" in clean_h: code_col_idx = i + 1
-                                if tm_h in clean_h and "單月營收" in clean_h:
-                                    if "月增" in clean_h: mom_col_idx = i + 1
-                                    elif "年增" in clean_h: yoy_col_idx = i + 1
-                                    elif "增" not in clean_h: target_col_idx = i + 1
-                            
-                            if target_col_idx != -1 and code_col_idx != -1:
-                                row_map = {str(r[code_col_idx-1]).split('.')[0].strip(): idx + 1 for idx, r in enumerate(data) if idx > 0 and len(r) >= code_col_idx and str(r[code_col_idx-1]).strip()}
-                                cells_to_update = []
-                                for _, row in df_early.iterrows():
-                                    code = str(row['公司代號']).strip()
-                                    if code in row_map:
-                                        row_idx = row_map[code]
-                                        if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
-                                        if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
-                                        if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
-                                
-                                if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{tm_h}單月營收月增(%)"))
-                                if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{tm_h}單月營收年增(%)"))
-                                if cells_to_update:
-                                    ws.update_cells(cells_to_update)
-                                    cnt += 1
-                                    
-                        if cnt > 0:
-                            status.update(label=f"🎉 營收成功寫入 {cnt} 張分頁！", state="complete", expanded=False)
-                            st.cache_data.clear(); st.balloons()
-                        else: status.update(label=f"⚠️ 無法更新", state="error", expanded=True)
-            except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(e)
-
-    target_q = st.sidebar.text_input("季報前綴 (如: 25Q4)", value="25Q4")
-    if st.sidebar.button("⚡ 3️⃣ 季報極速 API 清洗站 (全市場)", type="primary", use_container_width=True):
-        with st.status("執行極速全市場清洗...", expanded=True) as status:
-            try:
-                y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                
-                res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
-                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False, timeout=15).json()
-                
-                curr_dict = {}
-                def ext_val(item, kws, ex=None):
-                    if ex is None: ex = []
-                    for k, v in item.items():
-                        ck = str(k).replace(' ', '').replace('（', '(').replace('）', '')
-                        if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
-                            v_str = str(v).strip()
-                            if v_str and v_str not in ['None', '']:
-                                v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
-                                try: return float(v_str)
-                                except: pass
-                    return 0.0
-
-                for item in (res_twse + res_tpex):
-                    code = str(item.get('公司代號', '')).strip()
-                    if not code or str(item.get('年度', '')).strip() != y_roc or str(item.get('季別', '')).strip() != str(q_num): continue
-                        
-                    eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
-                    has_eps = eps_raw != 0.0
-
-                    rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
-                    op = ext_val(item, ['營業利益', '營業損失', '營業損益'])
-                    nonop = ext_val(item, ['營業外'])
-                    pretax = ext_val(item, ['稅前淨利', '稅前損益', '稅前'])
-
-                    if code in curr_dict and rev <= curr_dict[code]["rev"]: continue
-                    curr_dict[code] = {"rev": rev, "op": op, "nonop": nonop, "pretax": pretax, "eps": eps_raw, "has_eps": has_eps}
-
-                if not curr_dict: status.update(label="⚠️ 官方目前無此季資料", state="error")
-                else:
-                    worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
-                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
-                    cnt = 0
-                    for ws in target_sheets:
-                        data = ws.get_all_values()
-                        if not data: continue
-                        h = data[0]
-                        i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
-                        i_e = next((i for i, x in enumerate(h) if f"{target_q}單季每股盈餘" in str(x).replace(' ','')), -1)
-                        i_ae = next((i for i, x in enumerate(h) if "最新累季" in str(x).replace(' ','')), -1)
-                        i_om = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x).replace(' ','') and "增" not in str(x)), -1)
-                        i_om_q = next((i for i, x in enumerate(h) if "最新單季營益率季增" in str(x).replace(' ','')), -1)
-                        i_no = next((i for i, x in enumerate(h) if "業外損益佔" in str(x).replace(' ','')), -1)
-                        i_q1 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
-                        i_q2 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
-                        i_q3 = next((i for i, x in enumerate(h) if f"{target_q[:2]}Q3單季每股盈餘" in str(x).replace(' ','')), -1)
-                        
-                        if i_c != -1 and i_e != -1:
-                            cells = []
-                            for r, row in enumerate(data):
-                                if r == 0: continue
-                                code = str(row[i_c]).split('.')[0].strip()
-                                if code in curr_dict:
-                                    curr = curr_dict[code]
-                                    if curr["has_eps"]:
-                                        f_eps = curr["eps"]
-                                        try:
-                                            if q_num == 4 and i_q1!=-1 and i_q2!=-1 and i_q3!=-1: f_eps -= (float(row[i_q1] or 0) + float(row[i_q2] or 0) + float(row[i_q3] or 0))
-                                            elif q_num == 3 and i_q1!=-1 and i_q2!=-1: f_eps -= (float(row[i_q1] or 0) + float(row[i_q2] or 0))
-                                            elif q_num == 2 and i_q1!=-1: f_eps -= float(row[i_q1] or 0)
-                                        except: pass
-                                        cells.append(gspread.Cell(row=r+1, col=i_e+1, value=round(f_eps, 2)))
-                                        if i_ae != -1: cells.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps"], 2)))
-                                        
-                                    if curr["rev"] > 0:
-                                        if curr["op"] != 0 and i_om != -1: cells.append(gspread.Cell(row=r+1, col=i_om+1, value=round((curr["op"]/curr["rev"])*100, 2)))
-                                        elif i_om != -1: cells.append(gspread.Cell(row=r+1, col=i_om+1, value=""))
-                                        if i_om_q != -1: cells.append(gspread.Cell(row=r+1, col=i_om_q+1, value=""))
-                                        
-                                    if curr["pretax"] != 0 and i_no != -1:
-                                        cells.append(gspread.Cell(row=r+1, col=i_no+1, value=round((curr["nonop"]/curr["pretax"])*100, 2)))
-                            if cells: ws.update_cells(cells); cnt += len(cells)
-                    status.update(label=f"🎉 快速大掃除完成！共更新 {cnt} 格", state="complete")
-                    st.cache_data.clear()
-            except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
-
-# ==========================================
-# 4. 執行與呈現
-# ==========================================
-def render_dataframe(df_source, is_finance=False):
-    if df_source.empty: return
-    df = df_source.copy()
-    if is_finance:
-        df = df[["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]]
-        f_dict = {"最新股價": "{:.2f}", "PBR(股價淨值比)": "{:.2f}", "前瞻殖利率(%)": "{:.2f}%", "年化殖利率(%)": "{:.2f}%", "前瞻PER": "{:.2f}", "原始PER": "{:.2f}", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "運算配息率(%)": "{:.2f}%", "當季預估均營收(億)": "{:.2f}"}
-        st.dataframe(df.set_index("股票名稱").style.map(lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= 5.0 else '', subset=['前瞻殖利率(%)', '年化殖利率(%)']).format(f_dict), height=800, use_container_width=True)
-    else:
-        df = df.drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
-        df = df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
-        f_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
-        st.dataframe(df.set_index("股票名稱").style.map(lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= 4.0 else '', subset=['前瞻殖利率(%)']).format(f_dict), height=600, use_container_width=True)
-
-if cached_data:
-    db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
-    if is_admin:
-        t_vip, t_radar, t_fin = st.tabs(["🎯 專屬戰略指揮", "🔍 成長戰略雷達", "🏦 金融存股雷達"])
-    else:
-        t_vip, t_fin = st.tabs(["🎯 專屬戰略指揮", "🏦 金融存股雷達"])
-        t_radar = None
-    
-    with t_vip:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            if st.button("🚀 執行戰略分析", type="primary", use_container_width=True):
-                vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-                bar = st.progress(0, "獲取報價...")
-                res_list, found = [], 0
-                for i, code in enumerate(vips):
-                    d = db_gen.get(code) or db_fin.get(code)
-                    if d:
-                        found += 1
-                        bar.progress((i+1)/len(vips), f"分析: {code} {d['name']}")
-                        pr = get_realtime_price(code, d["price"])
-                        res_list.append(auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), pr, d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0)))
-                bar.empty()
-                if not found: st.warning("未找到股票")
-                elif res_list: st.session_state["df_vip"] = pd.DataFrame(res_list)
-        
-        # 💡 V147 軌道二：Yahoo Finance 國際通道直連救援
-        with c2:
-            if st.button("⚡ 啟動 VIP 深度毛利救援 (Yahoo 直連通道)", type="secondary", use_container_width=True):
-                with st.status("建立 Yahoo Finance 國際連線...", expanded=True) as status:
-                    try:
-                        vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-                        client = get_gspread_client()
-                        worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-                        target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
-                        
-                        for code in vips:
-                            st.write(f"正在攔截 {code} Yahoo 單季財報...")
-                            gm, om = get_yahoo_quarterly_financials(code)
-                            
-                            if gm is not None and om is not None:
-                                for ws in target_sheets:
-                                    data = ws.get_all_values()
-                                    if not data: continue
-                                    h = data[0]
-                                    i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
-                                    i_gm = next((i for i, x in enumerate(h) if "最新單季毛利率" in str(x).replace(' ','') and "增" not in str(x)), -1)
-                                    i_om = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x).replace(' ','') and "增" not in str(x)), -1)
-                                    i_gm_q = next((i for i, x in enumerate(h) if "最新單季毛利率季增" in str(x).replace(' ','')), -1)
-                                    i_om_q = next((i for i, x in enumerate(h) if "最新單季營益率季增" in str(x).replace(' ','')), -1)
-                                    
-                                    if i_c != -1 and (i_gm != -1 or i_om != -1):
-                                        for r, row in enumerate(data):
-                                            if r == 0: continue
-                                            if str(row[i_c]).split('.')[0].strip() == code:
-                                                cells = []
-                                                if i_gm != -1: cells.append(gspread.Cell(row=r+1, col=i_gm+1, value=round(gm, 2)))
-                                                if i_om != -1: cells.append(gspread.Cell(row=r+1, col=i_om+1, value=round(om, 2)))
-                                                if i_gm_q != -1: cells.append(gspread.Cell(row=r+1, col=i_gm_q+1, value=""))
-                                                if i_om_q != -1: cells.append(gspread.Cell(row=r+1, col=i_om_q+1, value=""))
-                                                
-                                                if cells: 
-                                                    ws.update_cells(cells)
-                                                    st.write(f"✅ 成功！{code} 單季毛利率:{round(gm, 2)}% 營益率:{round(om, 2)}%")
-                                                break
-                        status.update(label="🎉 Yahoo 國際通道救援完美達成！", state="complete")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        status.update(label="救援中斷", state="error"); st.error(e)
-
-        if "df_vip" in st.session_state:
-            df = st.session_state["df_vip"]
-            opts = sorted(df["股票名稱"].tolist())
-            vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
-            d_idx = next((i for i, o in enumerate(opts) if vips and o.startswith(vips[0])), 0)
-            sel = st.selectbox("📌 搜尋：", opts, index=d_idx)
-            row = df[df["股票名稱"] == sel].iloc[0]
-            st.markdown(f"**股價 {float(row['最新股價']):.2f}** ｜ 殖利率 **{row['前瞻殖利率(%)']}%** ｜ EPS **{row['預估今年度_EPS']}元** ｜ 成長率 **{row['預估年成長率(%)']}%**", unsafe_allow_html=True)
-            render_dataframe(df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False]))
-
-    if t_radar:
-        with t_radar:
-            st.markdown("##### 🚀 成長動能條件")
-            s1 = st.checkbox("☑️ 策略一：年底升溫")
-            s2 = st.checkbox("☑️ 策略二：淡季突破")
-            s3 = st.checkbox("☑️ 策略三：Q2大爆發")
-            c_r1, c_r2 = st.columns(2)
-            with c_r1:
-                f_grow = st.slider("穩健成長 (年增率 > %)", -10, 100, 10)
-                f_per = st.slider("便宜價 (本益比 <)", 5, 50, 50)
-            with c_r2: f_y = st.slider("高殖利率 (大於 %)", 0.0, 15.0, 4.0)
-            
-            ex_kws = st.text_input("🚫 排除關鍵字 (如: KY, 航運)")
-            
-            if st.button("📡 全市場掃描", type="primary"):
-                with st.spinner("掃描中..."):
-                    kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
-                    res_list = []
-                    for code, d in db_gen.items():
-                        if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
-                        r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0))
-                        
-                        ly_q1_avg, ly_q2 = r["_ly_qs"][0]/3, r["_ly_qs"][1]
-                        ly_11_12_avg = r["_total_est_qs"][0]/3 
-                        est_q1 = r["當季預估均營收"] * 3
-                        est_q2, est_q2_avg = r["_total_est_qs"][1], r["_total_est_qs"][1]/3
-                        best_q1_avg = (r["_known_qs"][0] if simulated_month >= 4 else est_q1)/3
-
-                        if s1 and not (ly_11_12_avg > ly_q1_avg): continue
-                        if s2 and not (est_q1 > ly_q2): continue
-                        if s3 and not (est_q2_avg >= best_q1_avg and est_q2 > ly_q2): continue
-                        if r["預估年成長率(%)"] < f_grow or (f_y > 0 and r["前瞻殖利率(%)"] < f_y) or (f_per < 50 and (r["本益比(PER)"] <= 0 or r["本益比(PER)"] > f_per)): continue
-                        res_list.append(r)
-                    if not res_list: st.warning("無符合條件股票")
-                    else: st.success(f"命中 {len(res_list)} 檔！"); render_dataframe(pd.DataFrame(res_list).sort_values(by=['前瞻殖利率(%)', '季成長率(YoY)%'], ascending=[False, False]))
-
-    with t_fin:
-        if st.button("🛡️ 啟動金融掃描", type="primary"):
-            with st.spinner("篩選中..."):
-                res_list = [financial_strategic_model(d["name"], c.strip(), simulated_month, d, simulated_month) for c, d in db_fin.items() if d.get("pbr",0) > 0]
-                if not res_list: st.warning("無符合條件的金融股")
-                else: render_dataframe(pd.DataFrame(res_list).sort_values(by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], ascending=[True, False, False]), is_finance=True)
-
-# ✅ 程式碼完整結束
+                                    if len(cs) >= 7 and (
