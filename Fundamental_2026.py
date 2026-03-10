@@ -43,7 +43,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V142 官方缺失防呆版)")
+st.title("📊 2026 戰略指揮 (V143 終極合併財報過濾版)")
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -166,6 +166,8 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 def load_google_sheet_data():
     try:
         client = get_gspread_client()
+        if not client: return None
+        
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
         df_general = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in worksheets if "個股總表" in ws.title and len(ws.get_all_values()) > 0], ignore_index=True)
         df_finance = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in worksheets if "金融股" in ws.title and len(ws.get_all_values()) > 0], ignore_index=True)
@@ -262,7 +264,7 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
         st.rerun()
 
 # ==========================================
-# 🌟 引擎：官方自動更新專區 (直接顯示，不再隱藏於Expander)
+# 🌟 引擎：官方自動更新專區 
 # ==========================================
 if is_admin:
     st.sidebar.divider()
@@ -381,7 +383,7 @@ if is_admin:
     st.sidebar.markdown("#### 3️⃣ 季報大掃除清洗站")
     target_q = st.sidebar.text_input("季報前綴 (如: 25Q4)", value="25Q4")
     if st.sidebar.button("⚡ 啟動財報清洗防呆引擎", type="primary", use_container_width=True):
-        with st.status("執行 V142 終極缺失防呆與重構...", expanded=True) as status:
+        with st.status("執行 V143 終極合併財報過濾版...", expanded=True) as status:
             try:
                 y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
                 headers = {'User-Agent': 'Mozilla/5.0'}
@@ -389,23 +391,26 @@ if is_admin:
                 res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False, timeout=15).json()
                 
                 curr_dict = {}
+                
+                # 💡 V143 終極精準萃取函數
                 def ext_val(item, kws, ex=None):
                     if ex is None: ex = []
-                    mk = []
+                    best_val = 0.0
                     for k, v in item.items():
                         ck = str(k).replace(' ', '').replace('（', '(').replace('）', ')')
                         if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
                             v_str = str(v).strip()
                             if v_str and v_str not in ['None', '']:
-                                v_str = '-' + v_str[1:-1] if v_str.startswith('(') and v_str.endswith(')') else v_str.replace(',', '')
-                                try: mk.append((ck, float(v_str)))
+                                # 修正數字內有逗號及括號(代表負數)的格式
+                                v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') and v_str.endswith(')') else v_str.replace(',', '')
+                                try:
+                                    num = float(v_str)
+                                    if num != 0:
+                                        best_val = num
+                                        # 如果欄位名稱包含淨額或已實現，直接視為最優解返回
+                                        if '淨額' in ck or '已實現' in ck: return num
                                 except: pass
-                    if not mk: return 0.0
-                    for ck, num in mk:
-                        if ('淨額' in ck or '已實現' in ck) and num != 0: return num
-                    for ck, num in mk:
-                        if num != 0: return num
-                    return 0.0
+                    return best_val
 
                 for item in (res_twse + res_tpex):
                     code = str(item.get('公司代號', '')).strip()
@@ -415,6 +420,7 @@ if is_admin:
                     has_eps = eps_raw != 0.0
 
                     rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
+                    # 💡 排除未實現，專抓真實毛利
                     gp = ext_val(item, ['營業毛利', '毛損', '毛利'], ex=['未實現'])
                     cost = ext_val(item, ['營業成本', '業務成本'])
                     op = ext_val(item, ['營業利益', '營業損失', '營業損益'])
@@ -422,10 +428,16 @@ if is_admin:
                     nonop = ext_val(item, ['營業外'])
                     pretax = ext_val(item, ['稅前淨利', '稅前損益', '稅前'])
                     
+                    # 🧮 會計學重構引擎
                     if gp == 0:
                         if rev > 0 and cost != 0: gp = rev - cost
                         elif op != 0 and exp != 0: gp = op + exp
                     if op == 0 and gp != 0 and exp != 0: op = gp - exp
+
+                    # 🏆 V143 終極大絕招：只保留「合併財報」(過濾掉空殼個體財報)
+                    if code in curr_dict:
+                        if rev <= curr_dict[code]["rev"]:
+                            continue  # 如果抓到的營收比已經存的還小，代表這是個體財報，直接跳過！
 
                     curr_dict[code] = {"rev": rev, "gp": gp, "op": op, "nonop": nonop, "pretax": pretax, "eps": eps_raw, "has_eps": has_eps}
 
@@ -468,7 +480,6 @@ if is_admin:
                                         if i_ae != -1: cells.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps"], 2)))
                                         
                                     if curr["rev"] > 0:
-                                        # 💡 V142 終極防呆：若算不出毛利，填空白而不是0
                                         if curr["gp"] != 0 and i_gm != -1: cells.append(gspread.Cell(row=r+1, col=i_gm+1, value=round((curr["gp"]/curr["rev"])*100, 2)))
                                         elif i_gm != -1: cells.append(gspread.Cell(row=r+1, col=i_gm+1, value=""))
                                         if i_gm_q != -1: cells.append(gspread.Cell(row=r+1, col=i_gm_q+1, value=""))
@@ -480,7 +491,7 @@ if is_admin:
                                     if curr["pretax"] != 0 and i_no != -1:
                                         cells.append(gspread.Cell(row=r+1, col=i_no+1, value=round((curr["nonop"]/curr["pretax"])*100, 2)))
                             if cells: ws.update_cells(cells); cnt += len(cells)
-                    status.update(label=f"🎉 V142 大掃除與防呆寫入完成！共更新 {cnt} 格！", state="complete")
+                    status.update(label=f"🎉 V143 終極合併財報洗淨完成！共精準更新 {cnt} 格！", state="complete")
                     st.cache_data.clear()
             except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
 
