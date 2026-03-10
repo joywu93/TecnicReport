@@ -812,4 +812,121 @@ if cached_data:
             st.markdown("##### 🚫 產業與特定個股排除")
             col_ex1, col_ex2, col_ex3 = st.columns(3)
             with col_ex1:
-                CONSTRUCTION_CODES = set(["1316", "1436", "1438", "1439", "1442", "
+                CONSTRUCTION_CODES = set(["1316", "1436", "1438", "1439", "1442", "1453", "1456", "1472", "1805", "1808", "2442", "2501", "2504", "2505", "2506", "2509", "2511", "2515", "2516", "2520", "2524", "2527", "2528", "2530", "2534", "2535", "2536", "2537", "2538", "2539", "2540", "2542", "2543", "2545", "2546", "2547", "2548", "2596", "2597", "2718", "2923", "3052", "3056", "3188", "3266", "3489", "3512", "3521", "3703", "4113", "4416", "4907", "5206", "5213", "5324", "5455", "5508", "5511", "5512", "5514", "5515", "5516", "5519", "5520", "5521", "5522", "5523", "5525", "5529", "5531", "5533", "5534", "5543", "5546", "5547", "5548", "6171", "6177", "6186", "6198", "6212", "6219", "6264", "8080", "8424", "9906", "9946"])
+                exclude_construction = st.checkbox("🚫 排除「營建類」", help="依據總指揮官提供之專屬代號清單精準剔除")
+            with col_ex2:
+                exclude_keywords = st.text_input("🚫 自訂額外排除 (支援代號或名稱)", placeholder="例如輸入：KY, 航運, 23 (用逗號隔開)")
+            
+            if st.button("📡 啟動全市場掃描", type="primary", use_container_width=True):
+                with st.spinner("快取引擎啟動，正在閃電掃描一般個股..."):
+                    user_kws = [k.strip() for k in re.split(r'[;,\s\t]+', exclude_keywords) if k.strip()]
+                    radar_results = []
+                    
+                    for code, data in stock_db_general.items():
+                        stock_code = str(code).strip()
+                        stock_name = data["name"]
+                        
+                        if exclude_construction and stock_code in CONSTRUCTION_CODES: continue
+                        if user_kws and any((k in stock_name or stock_code.startswith(k)) for k in user_kws): continue
+                        
+                        res = auto_strategic_model(
+                            name=f"{code} {data['name']}", current_month=simulated_month,
+                            rev_last_11=data.get("rev_last_11",0), rev_last_12=data.get("rev_last_12",0), rev_this_1=data.get("rev_this_1",0), rev_this_2=data.get("rev_this_2",0), rev_this_3=data.get("rev_this_3",0),
+                            base_q_eps=data["base_q_eps"], non_op_ratio=data.get("non_op", 0), base_q_avg_rev=data["base_q_avg_rev"],
+                            ly_q1_rev=data["ly_q1_rev"], ly_q2_rev=data["ly_q2_rev"], ly_q3_rev=data["ly_q3_rev"], ly_q4_rev=data["ly_q4_rev"],
+                            y1_q1_rev=data["y1_q1_rev"], y1_q2_rev=data["y1_q2_rev"], y1_q3_rev=data["y1_q3_rev"], y1_q4_rev=data["y1_q4_rev"],
+                            recent_payout_ratio=data.get("payout", 0), current_price=data["price"], 
+                            contract_liab=data.get("contract_liab", 0), contract_liab_qoq=data.get("contract_liab_qoq", 0),
+                            acc_eps=data.get("acc_eps", 0), declared_div=data.get("declared_div", 0) 
+                        )
+                        
+                        ly_q1_avg = res["_ly_qs"][0] / 3
+                        ly_q2 = res["_ly_qs"][1]
+                        ly_h2_avg = (res["_ly_qs"][2] + res["_ly_qs"][3]) / 6
+                        ly_11_12_avg = res["_total_est_qs"][0] / 3 
+                        
+                        is_q1_full = (simulated_month >= 4) 
+                        best_q1_total = res["_known_qs"][0] if is_q1_full else res["當季預估均營收"] * 3
+                        best_q1_avg = best_q1_total / 3
+                        
+                        est_q1_dynamic = res["當季預估均營收"] * 3
+                        est_q2_total = res["_total_est_qs"][1]
+                        est_q2_avg = est_q2_total / 3
+
+                        if filter_strat_1 and not (ly_11_12_avg > ly_q1_avg): continue
+                        if filter_strat_2 and not (est_q1_dynamic > ly_q2): continue
+                        if filter_strat_3 and not (est_q2_avg >= best_q1_avg and est_q2_total > ly_q2): continue
+                        if filter_strat_4 and not (est_q2_avg >= best_q1_avg and est_q2_avg >= ly_h2_avg): continue
+                        
+                        if res["預估年成長率(%)"] < filter_growth: continue
+                        if filter_yield > 0 and res["前瞻殖利率(%)"] < filter_yield: continue
+                        if filter_per < 50 and (res["本益比(PER)"] <= 0 or res["本益比(PER)"] > filter_per): continue
+                        
+                        radar_results.append(res)
+                    
+                    if not radar_results: st.warning("沒有找到符合所有條件的股票，請放寬條件再試一次！")
+                    else:
+                        st.success(f"🎉 掃描完成！共命中 **{len(radar_results)}** 檔潛力黑馬！")
+                        radar_df = pd.DataFrame(radar_results).drop(columns=["_ly_qs", "_known_qs", "_pure_est_qs", "_known_q1_months", "_total_est_qs", "logic_note", "payout_note", "套用公式"], errors='ignore')
+                        radar_df = radar_df.sort_values(by=['前瞻殖利率(%)', '季成長率(YoY)%'], ascending=[False, False])
+                        radar_df = radar_df[["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]]
+                        radar_df = radar_df.set_index("股票名稱")
+                        
+                        format_dict = {"最新股價": "{:.2f}", "當季預估均營收": "{:.2f}", "季成長率(YoY)%": "{:.2f}%", "前瞻殖利率(%)": "{:.2f}%", "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", "最新累季EPS": "{:.2f}", "本益比(PER)": "{:.2f}", "預估年成長率(%)": "{:.2f}%", "運算配息率(%)": "{:.2f}%", "最新季度流動合約負債(億)": "{:.2f}", "最新季度流動合約負債季增(%)": "{:.2f}%"}
+                        st.dataframe(radar_df.style.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.15)']*len(x), axis=1).format(format_dict), height=600, use_container_width=True)
+
+    # ----------------------------
+    # Tab 3: 🏦 金融防禦存股雷達
+    # ----------------------------
+    if tab_fin is not None:
+        with tab_fin:
+            st.markdown("### 🏦 金融存股防禦陣型 (資金避風港)")
+            st.markdown("💡 *此雷達專門讀取「金融股」分頁。採用【環比 EPS 引擎】與【季比例全年還原法】。*")
+            st.markdown("🥇 **黃金排序法則：** 1. 股價淨值比(低到高) ➔ 2. 前瞻殖利率(高到低) ➔ 3. 連配次數(高到低)")
+            st.markdown("---")
+
+            fin_results = []
+            
+            for code, data in stock_db_finance.items():
+                stock_code = str(code).strip()
+                
+                res = financial_strategic_model(
+                    name=data["name"], code=stock_code, current_month=simulated_month, 
+                    data=data, simulated_month=simulated_month
+                )
+                
+                if res["PBR(股價淨值比)"] <= 0: continue
+                fin_results.append(res)
+                    
+            if not fin_results:
+                st.warning("目前沒有符合條件的金融股，請確認您的 Google 表單「金融股」分頁資料正確。")
+            else:
+                fin_df = pd.DataFrame(fin_results)
+                
+                fin_df = fin_df.sort_values(
+                    by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], 
+                    ascending=[True, False, False]
+                )
+                
+                fin_df = fin_df[[
+                    "股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", 
+                    "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", 
+                    "運算配息率(%)", "當季預估均營收(億)"
+                ]]
+                
+                fin_df = fin_df.set_index("股票名稱")
+                
+                format_dict_fin = {
+                    "最新股價": "{:.2f}", "PBR(股價淨值比)": "{:.2f}", 
+                    "前瞻殖利率(%)": "{:.2f}%", "年化殖利率(%)": "{:.2f}%", 
+                    "前瞻PER": "{:.2f}", "原始PER": "{:.2f}",
+                    "預估今年Q1_EPS": "{:.2f}", "預估今年度_EPS": "{:.2f}", 
+                    "運算配息率(%)": "{:.2f}%", "當季預估均營收(億)": "{:.2f}"
+                }
+                
+                def highlight_fin_yield(val): return f'color: #ff4b4b; font-weight: bold' if isinstance(val, (int, float)) and val >= 5.0 else ''
+                
+                st.dataframe(
+                    fin_df.style.map(highlight_fin_yield, subset=['前瞻殖利率(%)', '年化殖利率(%)']).format(format_dict_fin), 
+                    height=800, use_container_width=True
+                )
