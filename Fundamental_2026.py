@@ -46,7 +46,17 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V137 終極會計重構版)")
+st.title("📊 2026 戰略指揮 (V138 底層封裝精簡版)")
+
+# 💡 V138 新增：將 Google 認證打包成共用模組，精簡程式碼長度防止截斷
+def get_gspread_client():
+    if "google_key" not in st.secrets:
+        raise ValueError("找不到 Google 金鑰 (google_key)")
+    scopes = ['https://www.googleapis.com/auth/spreadsheets']
+    key_data = st.secrets["google_key"]
+    key_dict = json.loads(key_data) if isinstance(key_data, str) else dict(key_data)
+    creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
+    return gspread.authorize(creds)
 
 def get_realtime_price(code, default_price):
     try:
@@ -60,7 +70,7 @@ def get_realtime_price(code, default_price):
         if p and p > 0: return float(p)
     except: pass
     
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     for sfx in ['.TW', '.TWO']:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{sfx}"
@@ -191,15 +201,11 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫，這只需兩秒鐘...")
 def load_google_sheet_data():
-    if "google_key" not in st.secrets: return None
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets']
-        key_dict = json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(st.secrets["google_key"])
-        creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
-        client = gspread.authorize(creds)
+        client = get_gspread_client()
+        if not client: return None
         
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-        
         target_sheets = [ws for ws in worksheets if "個股總表" in ws.title]
         df_general = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in target_sheets if len(ws.get_all_values()) > 0], ignore_index=True) if target_sheets else pd.DataFrame()
         
@@ -285,11 +291,7 @@ def load_google_sheet_data():
                 }
             return db
             
-        stock_db = parse_df(df_general)
-        finance_db = parse_df(df_finance)
-        
-        return {"general": stock_db, "finance": finance_db}
-        
+        return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e:
         return {"error": str(e)}
 
@@ -315,5 +317,129 @@ user_vip_list, user_row_idx, sheet_auth = "", None, None
 
 if user_email and "google_key" in st.secrets:
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = Credentials.from_service_account_info(json.loads(st.secrets["google_key"]) if isinstance(st.secrets["google_key"], str) else dict(
+        client = get_gspread_client()
+        sheet_auth = client.open_by_url(MASTER_GSHEET_URL).worksheet("權限管理")
+        auth_data = sheet_auth.get_all_records()
+        
+        for i, row in enumerate(auth_data):
+            if str(row.get('Email', '')).strip().lower() == current_user:
+                user_vip_list = str(row.get('VIP清單', ''))
+                user_row_idx = i + 2
+                admin_flag = str(row.get('管理員', '')).strip()
+                if admin_flag in ['是', '可', 'V', 'O', '1', 'true', 'yes', 'Y', 'y']:
+                    is_admin = True
+                break
+                
+        if user_row_idx: 
+            st.sidebar.success(f"✅ 歡迎回來！已載入專屬清單。{' (👑 管理員權限已解鎖)' if is_admin else ''}")
+        else: 
+            st.sidebar.info("👋 新朋友！輸入下方清單後按下儲存即可建立專屬帳號。")
+            
+    except Exception as e: st.sidebar.error("❌ 連線失敗，請確認是否建立「權限管理」分頁。")
+
+watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單 (用空白或逗號隔開)", value=user_vip_list if user_vip_list else "2330, 2317, 2382", height=100)
+
+if user_email and "google_key" in st.secrets:
+    if st.sidebar.button("💾 儲存 / 更新清單至雲端", type="secondary"):
+        if sheet_auth:
+            with st.spinner("正在將名單寫入雲端..."):
+                try:
+                    if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
+                    else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
+                    st.sidebar.success("✅ 清單已成功更新！")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e: st.sidebar.error(f"寫入失敗：{e}")
+
+# ==========================================
+# 🌟 引擎：官方自動更新專區 
+# ==========================================
+if is_admin:
+    st.sidebar.divider()
+    
+    with st.sidebar.expander("🤖 盤後股價自動更新 (官方資料)"):
+        if st.button("⚡ 一鍵更新全市場股價", type="primary", use_container_width=True):
+            with st.status("連線官方伺服器撈取今日全市場收盤價...", expanded=True) as status:
+                try:
+                    headers_agent = {'User-Agent': 'Mozilla/5.0'}
+                    res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers_agent, verify=False, timeout=10).json()
+                    res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers_agent, verify=False, timeout=10).json()
+                    
+                    price_dict = {}
+                    for item in res_twse:
+                        if item.get('ClosingPrice'):
+                            try: price_dict[str(item.get('Code', '')).strip()] = float(item.get('ClosingPrice').replace(',', ''))
+                            except: pass
+                    for item in res_tpex:
+                        if item.get('Close'):
+                            try: price_dict[str(item.get('SecuritiesCompanyCode', '')).strip()] = float(item.get('Close').replace(',', ''))
+                            except: pass
+                    
+                    if not price_dict:
+                        status.update(label="⚠️ 無法取得報價。", state="error", expanded=True)
+                    else:
+                        client = get_gspread_client()
+                        worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
+                        target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                        
+                        total_price_updated = 0
+                        for ws in target_sheets:
+                            all_data = ws.get_all_values()
+                            if not all_data: continue
+                            headers = all_data[0]
+                            code_col_idx, price_col_idx = -1, -1
+                            for i, h in enumerate(headers):
+                                clean_h = str(h).replace('\n', '').replace(' ', '').strip()
+                                if "代號" in clean_h: code_col_idx = i + 1
+                                elif "成交" in clean_h and not any(ex in clean_h for ex in ["量", "值", "比", "額", "金", "幅", "差", "均"]): 
+                                    price_col_idx = i + 1
+                            
+                            if code_col_idx != -1 and price_col_idx != -1:
+                                cells_to_update = []
+                                for row_i, row in enumerate(all_data):
+                                    if row_i == 0: continue
+                                    code = str(row[code_col_idx-1]).split('.')[0].strip()
+                                    if code in price_dict:
+                                        cells_to_update.append(gspread.Cell(row=row_i+1, col=price_col_idx, value=price_dict[code]))
+                                
+                                if cells_to_update:
+                                    ws.update_cells(cells_to_update)
+                                    total_price_updated += len(cells_to_update)
+                                    
+                        status.update(label=f"🎉 股價更新成功！共更新 {total_price_updated} 檔股票！", state="complete", expanded=False)
+                        st.cache_data.clear() 
+                        st.balloons()
+                except Exception as e:
+                    status.update(label="任務中斷", state="error", expanded=True)
+                    st.error(f"❌ 錯誤說明：{e}")
+
+    with st.sidebar.expander("🤖 月營收自動更新 (官方資料)"):
+        now = datetime.now()
+        lm_month, lm_year = now.month - 1, now.year
+        if lm_month == 0: lm_month, lm_year = 12, lm_year - 1
+        default_target_ym = f"{str(lm_year)[-2:]}M{str(lm_month).zfill(2)}"
+        auto_ym = st.text_input("設定欲更新的營收年月標題 (如: 26M03)", value=default_target_ym)
+        
+        if st.button("⚡ 一鍵更新營收至試算表", type="primary"):
+            with st.status(f"鎖定台灣交易所數據，尋找目標欄位【{auto_ym}】...", expanded=True) as status:
+                try:
+                    client = get_gspread_client()
+                    worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
+                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                    
+                    if not target_sheets: status.update(label="任務失敗：找不到相關分頁", state="error", expanded=True)
+                    else:
+                        target_m_header = auto_ym.strip().upper()
+                        y_prefix, m_suffix = int(target_m_header[:2]), int(target_m_header[-2:])
+                        roc_year, query_m = (2000 + y_prefix) - 1911, str(m_suffix)
+                        
+                        df_all_list = []
+                        headers_agent = {'User-Agent': 'Mozilla/5.0'}
+                        def clean_num(val): return v if re.match(r'^-?\d+(\.\d+)?$', (v := str(val).replace(',', '').replace('%', '').strip())) else ""
+
+                        st.write(f"讀取官方即時公佈榜 (HTML)...")
+                        gov_urls = [f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_0.html", f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{roc_year}_{query_m}_1.html", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_0.html", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{roc_year}_{query_m}_1.html"]
+                        for url in gov_urls:
+                            try:
+                                res = requests.get(url, headers=headers_agent, verify=False, timeout=8)
+                                if res.status_code ==
