@@ -45,7 +45,6 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-# 💡 V182 標題確認法：只要這裡不是 V182，就代表雲端沒更新！
 st.title("📊 2026 戰略指揮 (V182 雲端同步確認版)")
 
 def force_rerun():
@@ -626,10 +625,20 @@ if cached_data:
             
             if st.button("📡 全市場掃描", type="primary"):
                 with st.spinner("掃描中..."):
+                    # ✅ V182 新增：自動過濾營建、金融、證券類股防線
+                    exclude_codes = {
+                        '1316', '1436', '1438', '1439', '1442', '1453', '1456', '1472', '1805', '1808', '2442', '2501', '2504', '2505', '2506', '2509', '2511', '2515', '2516', '2520', '2524', '2527', '2528', '2530', '2534', '2535', '2536', '2537', '2538', '2539', '2540', '2542', '2543', '2545', '2546', '2547', '2548', '2596', '2597', '2718', '2923', '3052', '3056', '3188', '3266', '3489', '3512', '3521', '3703', '4113', '4416', '4907', '5206', '5213', '5324', '5455', '5508', '5511', '5512', '5514', '5515', '5516', '5519', '5520', '5521', '5522', '5523', '5525', '5529', '5531', '5533', '5534', '5543', '5546', '5547', '5548', '6171', '6177', '6186', '6198', '6212', '6219', '6264', '8080', '8424', '9906', '9946',
+                        '2880', '2881', '2882', '2883', '2884', '2885', '2886', '2887', '2889', '2890', '2891', '2892', '5880', '2816', '2832', '2850', '2851', '2852', '2867', '5878', '2801', '2812', '2820', '2834', '2836', '2838', '2845', '2849', '2897', '5876',
+                        '6016', '6020', '2855', '6015', '6005', '6026', '6024', '6023', '6021', '5864'
+                    }
+                    
                     kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
                     res_list = []
                     for code, d in db_gen.items():
+                        # 若代碼在排除清單中，直接跳過不掃描
+                        if code in exclude_codes: continue
                         if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
+                        
                         r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0))
                         
                         ly_q1_avg, ly_q2 = r["_ly_qs"][0]/3, r["_ly_qs"][1]
