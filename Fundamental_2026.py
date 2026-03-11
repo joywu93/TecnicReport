@@ -10,7 +10,7 @@ import numpy as np
 from datetime import datetime
 
 # ==========================================
-# 網頁基本設定
+# 網頁基本設定 & 響應式 CSS 
 # ==========================================
 st.set_page_config(page_title="2026 戰略指揮", layout="wide", initial_sidebar_state="expanded")
 
@@ -37,7 +37,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V185 純淨終極版)")
+st.title("📊 2026 戰略指揮 (V186 終極安息穩定版)")
 
 def clear_cache_and_session():
     st.cache_data.clear()
@@ -142,7 +142,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # 🌟 核心快取大腦 
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="🚀 讀取 Google Sheet 資料庫...")
-def load_google_sheet_data():
+def fetch_gsheet_data_v186():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -215,7 +215,7 @@ def load_google_sheet_data():
     except Exception as e: return {"error": str(e)}
 
 # 初始化載入快取資料
-cached_data = load_google_sheet_data()
+cached_data = fetch_gsheet_data_v186()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     db_gen, db_fin = {}, {}
@@ -258,16 +258,16 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
     with st.spinner("寫入中..."):
         if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
         else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
-        clear_cache_and_session()
         try: st.rerun()
         except: st.experimental_rerun()
 
 # ==========================================
-# 4. 執行與呈現 (絕對防爆渲染)
+# 4. 執行與呈現 (V186 物理級防爆矩陣渲染)
 # ==========================================
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
+    # 清理資料與索引
     df = df_source.copy().reset_index(drop=True)
     df = df.loc[:, ~df.columns.duplicated()]
     if "股票名稱" in df.columns:
@@ -281,6 +281,7 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
+    # 全面數值化排毒
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
@@ -289,23 +290,24 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
     threshold = 5.0 if is_finance else 4.0
     
     f_dict = {c: "{:.2f}%" if "(%)" in c or "%" in c else ("{:.0f}" if "次數" in c else "{:.2f}") for c in df.columns if c != "股票名稱"}
-        
-    def map_color(val):
-        try:
-            if float(val) >= threshold: return 'color: #ff4b4b; font-weight: bold'
-        except: pass
-        return ''
-
     df_clean = df.set_index("股票名稱")
     
+    # 🩸 核心手術：物理矩陣上色法！完全捨棄會當機的 applymap 和 subset
+    def highlight_logic(x):
+        # 建立一個全空的樣式矩陣
+        df_style = pd.DataFrame('', index=x.index, columns=x.columns)
+        if '前瞻殖利率(%)' in x.columns:
+            # 只有大於條件的格子才會被填入紅色樣式
+            mask = pd.to_numeric(x['前瞻殖利率(%)'], errors='coerce').fillna(0) >= threshold
+            df_style.loc[mask, '前瞻殖利率(%)'] = 'color: #ff4b4b; font-weight: bold'
+        return df_style
+
     try:
-        if '前瞻殖利率(%)' in df_clean.columns:
-            styler = df_clean.style.applymap(map_color, subset=['前瞻殖利率(%)']).format(f_dict)
-        else:
-            styler = df_clean.style.format(f_dict)
-        _ = styler.to_html() 
+        # 將矩陣安全地覆蓋上去，保證 Streamlit 抓不到任何語法錯誤！
+        styler = df_clean.style.apply(highlight_logic, axis=None).format(f_dict)
         st.dataframe(styler, height=calc_height, use_container_width=True)
     except Exception:
+        # 即使天塌下來，最後的物理防護網依然存在
         df_safe = df_clean.copy()
         for c in df_safe.columns:
             if "(%)" in c or "%" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}%")
@@ -327,8 +329,8 @@ with t_vip:
     with c1:
         if st.button("🚀 執行戰略分析", type="primary", use_container_width=True):
             with st.spinner("🔄 正在擷取 Google Sheet 最新數據..."):
-                load_google_sheet_data.clear() 
-                fresh_data = load_google_sheet_data()
+                fetch_gsheet_data_v186.clear() # 強制清除快取
+                fresh_data = fetch_gsheet_data_v186()
                 db_gen = fresh_data.get("general", {}) if fresh_data else {}
                 db_fin = fresh_data.get("finance", {}) if fresh_data else {}
             
@@ -392,9 +394,8 @@ with t_vip:
                                 f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
                                 unsafe_allow_html=True
                             )
-                            if is_admin:
-                                with st.expander("📝 點此查看預估邏輯"):
-                                    st.write(str(row.get('logic_note', '無紀錄')))
+                            with st.expander("📝 點此查看預估邏輯"):
+                                st.write(str(row.get('logic_note', '無紀錄')))
                         except Exception: pass
             
             with c2:
@@ -461,8 +462,8 @@ if t_radar:
         
         if st.button("📡 全市場掃描", type="primary"):
             with st.spinner("🔄 正在向 Google Sheet 抓取最新數據..."):
-                load_google_sheet_data.clear()
-                fresh_data = load_google_sheet_data()
+                fetch_gsheet_data_v186.clear()
+                fresh_data = fetch_gsheet_data_v186()
                 db_gen = fresh_data.get("general", {}) if fresh_data else {}
                 db_fin = fresh_data.get("finance", {}) if fresh_data else {}
                 
@@ -490,8 +491,8 @@ if t_radar:
 with t_fin:
     if st.button("🛡️ 啟動金融掃描", type="primary"):
         with st.spinner("🔄 正在向 Google Sheet 抓取最新數據..."):
-            load_google_sheet_data.clear()
-            fresh_data = load_google_sheet_data()
+            fetch_gsheet_data_v186.clear()
+            fresh_data = fetch_gsheet_data_v186()
             db_gen = fresh_data.get("general", {}) if fresh_data else {}
             db_fin = fresh_data.get("finance", {}) if fresh_data else {}
             
