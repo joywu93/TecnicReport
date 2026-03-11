@@ -131,7 +131,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 
     return {
         "股票名稱": name, "最新股價": round(current_price, 2), 
-        # ✅ V182 修復：將內部變數加上底線，自動啟動畫面隱藏機制
         "_logic_note": formula_note, "_payout_note": "", 
         "當季預估均營收": round(dynamic_base_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps_display, 2), 
@@ -167,40 +166,3 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     else: est_fy_eps = est_q1_eps * 4
         
     current_price = float(data["price"]) if data["price"] else 0.0
-    est_per = current_price / est_fy_eps if est_fy_eps > 0 else 0
-    payout_ratio = 90 if data["payout"] > 100 else (data["payout"] if data["payout"] > 0 else 50)
-    est_dividend = est_fy_eps * (payout_ratio / 100)
-    
-    forward_yield = (max(data.get("declared_div", 0), est_dividend) / current_price) * 100 if current_price > 0 else 0
-        
-    return {
-        "股票名稱": f"{code} {data['name']}", "最新股價": round(current_price, 2), "PBR(股價淨值比)": round(data.get("pbr", 0), 2),
-        "前瞻殖利率(%)": round(forward_yield, 2), "年化殖利率(%)": round(data.get("annual_yield", 0), 2),
-        "前瞻PER": round(est_per, 2), "原始PER": round(data.get("orig_per", 0), 2), "連續配息次數": int(data.get("div_years", 0)),
-        "預估今年Q1_EPS": round(est_q1_eps, 2), "預估今年度_EPS": round(est_fy_eps, 2), "運算配息率(%)": payout_ratio, "當季預估均營收(億)": round(dynamic_base_avg, 2)
-    }
-
-# ==========================================
-# 🌟 核心快取大腦 
-# ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (V182 強制突破版)...")
-def fetch_gsheet_data_v182():
-    try:
-        client = get_gspread_client()
-        worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-        
-        gen_dfs = []
-        fin_dfs = []
-        
-        for ws in worksheets:
-            if "個股總表" in ws.title:
-                data = ws.get_all_values()
-                if data and len(data) > 1:
-                    gen_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
-            elif "金融股" in ws.title:
-                data = ws.get_all_values()
-                if data and len(data) > 1:
-                    fin_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
-                    
-        df_general = pd.concat(gen_dfs, ignore_index=True) if gen_dfs else pd.DataFrame()
-        df_finance = pd.concat(fin_dfs, ignore_index=True) if fin_dfs else pd.DataFrame
