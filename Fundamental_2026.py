@@ -45,7 +45,18 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V168 終極定海神針版)")
+st.title("📊 2026 戰略指揮 (V169 終極除錯防線版)")
+
+def force_rerun():
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
+def clear_cache_and_session():
+    st.cache_data.clear()
+    if "df_vip" in st.session_state:
+        del st.session_state["df_vip"]
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -169,7 +180,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # 🌟 核心快取大腦 
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (執行深度排毒)...")
-def fetch_gsheet_data_v168():
+def fetch_gsheet_data_v169():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -232,7 +243,7 @@ def fetch_gsheet_data_v168():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v168()
+cached_data = fetch_gsheet_data_v169()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -240,16 +251,12 @@ if cached_data and "error" in cached_data:
 # ==========================================
 # 側邊欄：登入與動態權限判斷
 # ==========================================
-# 💡 V168 新增視覺回饋：強制重載並提示成功
 if st.sidebar.button("🔄 重新載入最新表單資料 (清除雲端暫存)", type="primary", use_container_width=True):
     st.cache_data.clear()
     st.session_state.clear()
     st.sidebar.success("✅ 雲端記憶已清除！請重新點擊『🚀 執行戰略分析』")
     time.sleep(1)
-    try:
-        st.rerun()
-    except AttributeError:
-        st.experimental_rerun()
+    force_rerun()
 
 st.sidebar.header("⚙️ 系統參數")
 current_real_month = datetime.now().month
@@ -283,12 +290,8 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
     with st.spinner("寫入中..."):
         if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
         else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
-        st.cache_data.clear()
-        st.session_state.clear()
-        try:
-            st.rerun()
-        except:
-            st.experimental_rerun()
+        clear_cache_and_session()
+        force_rerun()
 
 # ==========================================
 # 🌟 引擎：官方自動更新專區 
@@ -501,14 +504,21 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-# 💡 V168 鋼鐵防爆渲染機制：徹底消滅 NaN，加上 Try-Except 雙重防護！
+# 💡 V169: 終極防爆渲染，強制斬斷重複欄位與重複股票，拔除所有不穩定套件！
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
-    # 1. 深度拷貝並清除舊索引
+    # 1. 安全拷貝並清除舊有索引
     df = df_source.copy().reset_index(drop=True)
     
-    # 2. 定義欄位
+    # 🛡️ 2. 斬斷重複欄位 (Google Sheet 中可能存在的同名隱藏欄位會導致渲染引擎崩潰)
+    df = df.loc[:, ~df.columns.duplicated()]
+    
+    # 🛡️ 3. 斬斷重複股票 (確保 Index 唯一性)
+    if "股票名稱" in df.columns:
+        df = df.drop_duplicates(subset=["股票名稱"])
+    
+    # 4. 篩選欄位
     if is_finance:
         cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
     else:
@@ -516,12 +526,12 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
-    # 3. 終極強制排毒 (Detox) - 將所有文字亂碼、空值強制轉換為數值 0.0
+    # 5. 強制數值化排毒
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
             
-    # 4. 建立安全格式化字典
+    # 6. 安全格式化字典
     f_dict = {}
     for c in df.columns:
         if c == "股票名稱": continue
@@ -530,26 +540,13 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         else: f_dict[c] = "{:.2f}"
         
     calc_height = None if is_single else (800 if is_finance else 600)
-    threshold = 5.0 if is_finance else 4.0
     
-    # 🛡️ 5. 安全渲染氣囊 (Fallback Mechanism)
-    try:
-        # 首選：帶有紅色高亮的正常渲染
-        styler = df.set_index("股票名稱").style.map(
-            lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= threshold else '', 
-            subset=['前瞻殖利率(%)']
-        ).format(f_dict)
-        st.dataframe(styler, height=calc_height, use_container_width=True)
-    except AttributeError:
-        # 備用 1：相容舊版 Pandas 的 applymap 寫法
-        styler = df.set_index("股票名稱").style.applymap(
-            lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= threshold else '', 
-            subset=['前瞻殖利率(%)']
-        ).format(f_dict)
-        st.dataframe(styler, height=calc_height, use_container_width=True)
-    except Exception:
-        # 備用 2：最極端情況，放棄樣式，只輸出純淨的數字表格，保證絕對不當機
-        st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
+    # 🛡️ 7. 放棄高風險的上色引擎，改用最穩定、100%絕對不當機的純淨文字渲染！
+    st.dataframe(
+        df.set_index("股票名稱").style.format(f_dict), 
+        height=calc_height, 
+        use_container_width=True
+    )
 
 if cached_data:
     db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
