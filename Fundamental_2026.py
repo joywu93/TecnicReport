@@ -45,18 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V167 鋼鐵防爆渲染版)")
-
-def force_rerun():
-    try:
-        st.rerun()
-    except AttributeError:
-        st.experimental_rerun()
-
-def clear_cache_and_session():
-    st.cache_data.clear()
-    if "df_vip" in st.session_state:
-        del st.session_state["df_vip"]
+st.title("📊 2026 戰略指揮 (V168 終極定海神針版)")
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -180,7 +169,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # 🌟 核心快取大腦 
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (執行深度排毒)...")
-def fetch_gsheet_data_v167():
+def fetch_gsheet_data_v168():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -213,7 +202,7 @@ def fetch_gsheet_data_v167():
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
-                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '-infinity', '#n/a', 'n/a']: return d
+                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '-infinity', '#n/a', 'n/a', '#div/0!']: return d
                     try: 
                         val = float(val_str)
                         if math.isnan(val) or math.isinf(val): return d
@@ -243,7 +232,7 @@ def fetch_gsheet_data_v167():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v167()
+cached_data = fetch_gsheet_data_v168()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -251,9 +240,16 @@ if cached_data and "error" in cached_data:
 # ==========================================
 # 側邊欄：登入與動態權限判斷
 # ==========================================
-if st.sidebar.button("🔄 重新載入最新表單資料", type="secondary", use_container_width=True):
-    clear_cache_and_session()
-    force_rerun()
+# 💡 V168 新增視覺回饋：強制重載並提示成功
+if st.sidebar.button("🔄 重新載入最新表單資料 (清除雲端暫存)", type="primary", use_container_width=True):
+    st.cache_data.clear()
+    st.session_state.clear()
+    st.sidebar.success("✅ 雲端記憶已清除！請重新點擊『🚀 執行戰略分析』")
+    time.sleep(1)
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
 
 st.sidebar.header("⚙️ 系統參數")
 current_real_month = datetime.now().month
@@ -287,8 +283,12 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
     with st.spinner("寫入中..."):
         if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
         else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
-        clear_cache_and_session()
-        force_rerun()
+        st.cache_data.clear()
+        st.session_state.clear()
+        try:
+            st.rerun()
+        except:
+            st.experimental_rerun()
 
 # ==========================================
 # 🌟 引擎：官方自動更新專區 
@@ -297,7 +297,7 @@ if is_admin:
     st.sidebar.divider()
     st.sidebar.markdown("### 🤖 大數據自動更新中心")
     
-    if st.sidebar.button("⚡ 1️⃣ 盤後股價更新", type="primary", use_container_width=True):
+    if st.sidebar.button("⚡ 1️⃣ 盤後股價更新", type="secondary", use_container_width=True):
         with st.status("連線官方伺服器...", expanded=True) as status:
             try:
                 headers = {'User-Agent': 'Mozilla/5.0'}
@@ -320,13 +320,13 @@ if is_admin:
                             cells = [gspread.Cell(row=r+1, col=p_idx+1, value=price_dict[code]) for r, row in enumerate(data) if r > 0 and (code := str(row[c_idx]).split('.')[0].strip()) in price_dict]
                             if cells: ws.update_cells(cells); cnt += len(cells)
                     status.update(label=f"🎉 成功更新 {cnt} 檔！", state="complete")
-                    clear_cache_and_session()
+                    st.cache_data.clear()
             except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
 
     now = datetime.now()
     lm_month, lm_year = (now.month - 1) or 12, now.year if now.month > 1 else now.year - 1
     auto_ym = st.sidebar.text_input("設定營收標題 (如: 26M03)", value=f"{str(lm_year)[-2:]}M{str(lm_month).zfill(2)}")
-    if st.sidebar.button("⚡ 2️⃣ 官方月營收更新", type="primary", use_container_width=True):
+    if st.sidebar.button("⚡ 2️⃣ 官方月營收更新", type="secondary", use_container_width=True):
         with st.status(f"鎖定目標欄位【{auto_ym}】...", expanded=True) as status:
             try:
                 worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -387,14 +387,14 @@ if is_admin:
                                     
                         if cnt > 0:
                             status.update(label=f"🎉 營收成功寫入 {cnt} 張分頁！", state="complete", expanded=False)
-                            clear_cache_and_session()
+                            st.cache_data.clear()
                             st.balloons()
                         else: status.update(label=f"⚠️ 無法更新", state="error", expanded=True)
             except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(e)
 
     target_q = st.sidebar.text_input("季報前綴 (如: 25Q4)", value="25Q4")
     
-    if st.sidebar.button("⚡ 3️⃣ 季報極速 API 清洗站 (安全版)", type="primary", use_container_width=True):
+    if st.sidebar.button("⚡ 3️⃣ 季報極速 API 清洗站 (安全版)", type="secondary", use_container_width=True):
         with st.status("執行官方 Open API 安全清洗 (保護毛利不覆蓋)...", expanded=True) as status:
             try:
                 y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
@@ -491,7 +491,7 @@ if is_admin:
                                         cells.append(gspread.Cell(row=r+1, col=i_no+1, value=round((curr["nonop"]/curr["pretax"])*100, 2)))
                             if cells: ws.update_cells(cells); cnt += len(cells)
                     status.update(label=f"🎉 安全清洗完成！成功更新 {cnt} 格 (EPS 與 業外已補齊)", state="complete")
-                    clear_cache_and_session()
+                    st.cache_data.clear()
             except Exception as e: 
                 if "NameResolutionError" in str(e) or "Max retries exceeded" in str(e):
                     status.update(label="❌ 雲端網路暫時斷線，請稍後再試", state="error")
@@ -501,11 +501,11 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-# 💡 V167: 終極防爆渲染機制！保證畫面永遠不崩潰
+# 💡 V168 鋼鐵防爆渲染機制：徹底消滅 NaN，加上 Try-Except 雙重防護！
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
-    # 1. 安全複製並移除可能造成衝突的舊有 index
+    # 1. 深度拷貝並清除舊索引
     df = df_source.copy().reset_index(drop=True)
     
     # 2. 定義欄位
@@ -516,13 +516,12 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
-    # 🛡️ 3. 終極強制排毒 (Detox)：
-    # 把所有「數字欄位」強制轉成浮點數。遇到任何 NaN, inf, 空白, 文字, 亂碼，瞬間強制歸零！
+    # 3. 終極強制排毒 (Detox) - 將所有文字亂碼、空值強制轉換為數值 0.0
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
             
-    # 4. 建立格式化字典
+    # 4. 建立安全格式化字典
     f_dict = {}
     for c in df.columns:
         if c == "股票名稱": continue
@@ -533,23 +532,23 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
     calc_height = None if is_single else (800 if is_finance else 600)
     threshold = 5.0 if is_finance else 4.0
     
-    # 🛡️ 5. 安全氣囊渲染 (Fallback)
+    # 🛡️ 5. 安全渲染氣囊 (Fallback Mechanism)
     try:
-        # 正常渲染模式 (加上紅色高亮)
+        # 首選：帶有紅色高亮的正常渲染
         styler = df.set_index("股票名稱").style.map(
             lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= threshold else '', 
             subset=['前瞻殖利率(%)']
         ).format(f_dict)
         st.dataframe(styler, height=calc_height, use_container_width=True)
     except AttributeError:
-        # 相容舊版 Pandas 寫法
+        # 備用 1：相容舊版 Pandas 的 applymap 寫法
         styler = df.set_index("股票名稱").style.applymap(
             lambda v: 'color: #ff4b4b; font-weight: bold' if isinstance(v, (int, float)) and v >= threshold else '', 
             subset=['前瞻殖利率(%)']
         ).format(f_dict)
         st.dataframe(styler, height=calc_height, use_container_width=True)
-    except Exception as e:
-        # 如果還是發生未知的渲染崩潰，直接印出無樣式的乾淨表格，保證畫面上一定有資料！
+    except Exception:
+        # 備用 2：最極端情況，放棄樣式，只輸出純淨的數字表格，保證絕對不當機
         st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
 
 if cached_data:
@@ -592,6 +591,7 @@ if cached_data:
                 liab_value = row.get('最新季度流動合約負債(億)', 0) 
                 liab_qoq = row.get('最新季度流動合約負債季增(%)', 0)
                 
+                # 安全字串轉換
                 safe_price = float(row['最新股價']) if pd.notna(row['最新股價']) else 0.0
                 safe_yield = float(row['前瞻殖利率(%)']) if pd.notna(row['前瞻殖利率(%)']) else 0.0
                 safe_per = float(row['本益比(PER)']) if pd.notna(row['本益比(PER)']) else 0.0
