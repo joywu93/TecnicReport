@@ -8,8 +8,17 @@ from datetime import datetime
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 替換成您的 Google 試算表網址
+# ==========================================
+# ⚙️ 晚輩接手必看：自訂設定區
+# ==========================================
+# 1. 您的 Google 試算表網址
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
+
+# 2. 表單欄位名稱辨識設定 (配合原本的 Goodinfo 與 VBA，不改表單名稱)
+# 只要表單的標題「包含」以下的字眼，程式就會自動認得它
+COL_NAME_CUM_EPS = "最新累季"          # 對應：最新累季每股盈餘(元)
+COL_NAME_CUM_GM  = "最新單季毛利率"     # 對應：最新單季毛利率(%) (註：填入的會是累計數字)
+COL_NAME_CUM_OM  = "最新單季營益率"     # 對應：最新單季營益率(%) (註：填入的會是累計數字)
 
 # ==========================================
 # 🤖 智慧日期判讀系統：自動決定要抓哪一季
@@ -39,6 +48,8 @@ TARGET_YEAR_ROC = str(target_y - 1911)
 TARGET_Q = target_q
 Q_STRING = f"{str(target_y)[-2:]}Q{target_q}"
 
+# ==========================================
+# 以下為核心運算區，若無重大錯誤請勿隨意更動
 # ==========================================
 
 def get_gspread_client():
@@ -89,6 +100,7 @@ def fetch_and_update():
         gp = ext_val(item, ['營業毛利', '毛損', '毛利'], ex=['未實現'])
         op = ext_val(item, ['營業利益', '營業損失', '營業損益'])
         
+        # 這裡計算出來的是「累計」毛利率與營益率
         gm_percent = round((gp / rev) * 100, 2) if rev > 0 else 0.0
         om_percent = round((op / rev) * 100, 2) if rev > 0 else 0.0
 
@@ -100,7 +112,6 @@ def fetch_and_update():
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
     
-    # 這裡會自動抓出所有名稱包含「個股總表」或「金融股」的分頁 (包含個股總表1~7)
     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
     print(f"找到目標分頁：{[ws.title for ws in target_sheets]}")
     
@@ -110,10 +121,13 @@ def fetch_and_update():
         if not data: continue
         h = data[0]
         
+        # 利用最上方的設定區變數來尋找欄位
         i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
         i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in str(x).replace(' ','')), -1)
-        i_gm = next((i for i, x in enumerate(h) if "最新單季毛利率" in str(x).replace(' ','') and "增" not in str(x)), -1)
-        i_om = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x).replace(' ','') and "增" not in str(x)), -1)
+        
+        i_ae = next((i for i, x in enumerate(h) if COL_NAME_CUM_EPS in str(x).replace(' ','')), -1)
+        i_gm = next((i for i, x in enumerate(h) if COL_NAME_CUM_GM in str(x).replace(' ','') and "增" not in str(x)), -1)
+        i_om = next((i for i, x in enumerate(h) if COL_NAME_CUM_OM in str(x).replace(' ','') and "增" not in str(x)), -1)
         
         i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
         i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
@@ -127,6 +141,7 @@ def fetch_and_update():
                 if code in curr_dict:
                     curr = curr_dict[code]
                     
+                    # 1. 處理單季 EPS (自動扣除前幾季)
                     single_q_eps = curr["eps_cumulative"]
                     def get_v(idx):
                         if idx == -1: return 0.0
@@ -139,6 +154,12 @@ def fetch_and_update():
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
+                    
+                    # 2. 處理最新累季 EPS (直接填入官方數字)
+                    if i_ae != -1:
+                        cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
+
+                    # 3. 處理毛利率與營益率 (寫入您原本的單季欄位)
                     if i_gm != -1 and curr["gm"] != 0:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_gm+1, value=curr["gm"]))
                     if i_om != -1 and curr["om"] != 0:
