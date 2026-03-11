@@ -45,7 +45,18 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V177 歸零定海神針版)")
+st.title("📊 2026 戰略指揮 (V178 智慧節流無錯版)")
+
+def force_rerun():
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
+def clear_cache_and_session():
+    st.cache_data.clear()
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
 
 def get_gspread_client():
     if "google_key" not in st.secrets: raise ValueError("找不到 Google 金鑰")
@@ -166,9 +177,9 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     }
 
 # ==========================================
-# 🌟 核心大腦 (V177 遵照指示：TTL=1 確保每次點擊都抓最新資料)
+# 🌟 核心快取大腦 (V178 恢復 1 小時快取，避免被 Google 封鎖！)
 # ==========================================
-@st.cache_data(ttl=1, show_spinner="連線至大數據庫 (每次執行即時抓取)...")
+@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫...")
 def load_google_sheet_data():
     try:
         client = get_gspread_client()
@@ -202,7 +213,7 @@ def load_google_sheet_data():
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
-                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '-infinity', '#n/a', 'n/a', '#div/0!']: return d
+                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '#n/a', 'n/a', '#div/0!']: return d
                     try: 
                         val = float(val_str)
                         if math.isnan(val) or math.isinf(val): return d
@@ -240,6 +251,12 @@ if cached_data and "error" in cached_data:
 # ==========================================
 # 側邊欄：登入與動態權限判斷
 # ==========================================
+if st.sidebar.button("🔄 重新載入最新表單資料 (清除雲端暫存)", type="primary", use_container_width=True):
+    clear_cache_and_session()
+    st.sidebar.success("✅ 雲端記憶已清除！即將為您重新抓取最新資料！")
+    time.sleep(1)
+    force_rerun()
+
 st.sidebar.header("⚙️ 系統參數")
 current_real_month = datetime.now().month
 simulated_month = st.sidebar.slider("月份推演 (檢視當下戰情)", 1, 12, current_real_month)
@@ -272,7 +289,8 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
     with st.spinner("寫入中..."):
         if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
         else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
-        st.rerun()
+        clear_cache_and_session()
+        force_rerun()
 
 # ==========================================
 # 🌟 引擎：官方自動更新專區 (與 V158 完全一致)
@@ -480,7 +498,7 @@ if is_admin:
                     status.update(label="錯誤", state="error"); st.error(e)
 
 # ==========================================
-# 4. 執行與呈現 (V177 徹底拔除高亮與樣式)
+# 4. 執行與呈現 (V178 徹底拔除高亮與樣式)
 # ==========================================
 def render_dataframe(df_source, is_finance=False):
     if df_source is None or df_source.empty: return
