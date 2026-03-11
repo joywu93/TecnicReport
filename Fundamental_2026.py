@@ -45,7 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V180 終極黃金完全體)")
+st.title("📊 2026 戰略指揮 (V181 光速引擎極致版)")
 
 def force_rerun():
     try:
@@ -177,24 +177,39 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     }
 
 # ==========================================
-# 🌟 核心快取大腦 
+# 🌟 核心快取大腦 (V181 光速單次讀取優化版)
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫...")
-def load_google_sheet_data():
+@st.cache_data(ttl=3600, show_spinner="🚀 連線至雙核大數據庫 (光速讀取中)...")
+def fetch_gsheet_data_v181():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-        df_general = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in worksheets if "個股總表" in ws.title and len(ws.get_all_values()) > 0], ignore_index=True)
-        df_finance = pd.concat([pd.DataFrame(ws.get_all_values()[1:], columns=ws.get_all_values()[0]) for ws in worksheets if "金融股" in ws.title and len(ws.get_all_values()) > 0], ignore_index=True)
+        
+        gen_dfs = []
+        fin_dfs = []
+        
+        # 💡 光速優化：每個分頁「只下載一次資料」，徹底解決無限打轉與 429 API 超限問題！
+        for ws in worksheets:
+            if "個股總表" in ws.title:
+                data = ws.get_all_values()
+                if data and len(data) > 1:
+                    gen_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
+            elif "金融股" in ws.title:
+                data = ws.get_all_values()
+                if data and len(data) > 1:
+                    fin_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
+                    
+        df_general = pd.concat(gen_dfs, ignore_index=True) if gen_dfs else pd.DataFrame()
+        df_finance = pd.concat(fin_dfs, ignore_index=True) if fin_dfs else pd.DataFrame()
 
         def parse_df(df):
             if df is None or df.empty: return {}
             cols = df.columns.tolist()
-            q_cols = [c for c in cols if re.search(r'(\d{2})Q', c)]
+            q_cols = [str(c) for c in cols if re.search(r'(\d{2})Q', str(c))]
             ly = max([re.search(r'(\d{2})Q', c).group(1) for c in q_cols]) if q_cols else "25"
             y1 = str(int(ly) - 1) 
 
-            yp = [int(m.group(1)) for c in cols for m in [re.search(r'(\d{2})M\d{2}單月營收', c.replace(' ', ''))] if m and "增" not in c]
+            yp = [int(m.group(1)) for c in cols for m in [re.search(r'(\d{2})M\d{2}單月營收', str(c).replace(' ', ''))] if m and "增" not in str(c)]
             this_y, last_y = str(max(yp)) if yp else "", str(int(max(yp)) - 1) if yp else ""
 
             def get_col(k1, k2="", ex=[]):
@@ -209,7 +224,7 @@ def load_google_sheet_data():
                 code = str(row[c_code]).split('.')[0].strip() if c_code and pd.notna(row[c_code]) else ""
                 if len(code) < 3: continue 
                 
-                # 🛡️ 底層排毒防護網
+                # 🛡️ 終極排毒濾水器
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
@@ -243,7 +258,7 @@ def load_google_sheet_data():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = load_google_sheet_data()
+cached_data = fetch_gsheet_data_v181()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -251,9 +266,9 @@ if cached_data and "error" in cached_data:
 # ==========================================
 # 側邊欄：登入與動態權限判斷
 # ==========================================
-if st.sidebar.button("🔄 重新載入最新表單資料 (清除雲端暫存)", type="primary", use_container_width=True):
+if st.sidebar.button("🔄 重新載入最新表單資料", type="primary", use_container_width=True):
     clear_cache_and_session()
-    st.sidebar.success("✅ 雲端記憶已清除！即將為您重新抓取最新資料！")
+    st.sidebar.success("✅ 雲端記憶已清除！即將為您光速抓取最新資料！")
     time.sleep(1)
     force_rerun()
 
@@ -275,4 +290,162 @@ if user_email and "google_key" in st.secrets:
         sheet_auth = client.open_by_url(MASTER_GSHEET_URL).worksheet("權限管理")
         auth_data = sheet_auth.get_all_records()
         for i, row in enumerate(auth_data):
-            if str(row.get('Email', '')).strip().lower
+            if str(row.get('Email', '')).strip().lower() == current_user:
+                user_vip_list = str(row.get('VIP清單', ''))
+                user_row_idx = i + 2
+                if str(row.get('管理員', '')).strip() in ['是', '可', 'V', '1', 'true', 'yes', 'Y', 'y']: is_admin = True
+                break
+        if user_row_idx: st.sidebar.success(f"✅ 歡迎！{' (👑 管理員)' if is_admin else ''}")
+        else: st.sidebar.info("👋 輸入清單後儲存即可建立帳號。")
+    except Exception as e: st.sidebar.error("❌ 連線失敗。")
+
+watch_list_input = st.sidebar.text_area("📌 您的專屬關注清單", value=user_vip_list if user_vip_list else "2330, 2317, 3023", height=100)
+if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondary") and sheet_auth:
+    with st.spinner("寫入中..."):
+        if user_row_idx: sheet_auth.update_cell(user_row_idx, 2, watch_list_input)
+        else: sheet_auth.append_row([user_email.strip(), watch_list_input, "否"]) 
+        clear_cache_and_session()
+        force_rerun()
+
+# ==========================================
+# 🌟 引擎：官方自動更新專區 
+# ==========================================
+if is_admin:
+    st.sidebar.divider()
+    st.sidebar.markdown("### 🤖 大數據自動更新中心")
+    
+    if st.sidebar.button("⚡ 1️⃣ 盤後股價更新", type="secondary", use_container_width=True):
+        with st.status("連線官方伺服器...", expanded=True) as status:
+            try:
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                try: res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, verify=False, timeout=10).json()
+                except: res_twse = []
+                try: res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers, verify=False, timeout=10).json()
+                except: res_tpex = []
+
+                price_dict = {}
+                if isinstance(res_twse, list):
+                    price_dict.update({str(i.get('Code', '')).strip(): float(i.get('ClosingPrice', '0').replace(',', '')) for i in res_twse if i.get('ClosingPrice')})
+                if isinstance(res_tpex, list):
+                    price_dict.update({str(i.get('SecuritiesCompanyCode', '')).strip(): float(i.get('Close', '0').replace(',', '')) for i in res_tpex if i.get('Close')})
+                
+                if not price_dict: status.update(label="⚠️ 無法取得報價 (API無回應)。", state="error")
+                else:
+                    worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
+                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                    cnt = 0
+                    for ws in target_sheets:
+                        data = ws.get_all_values()
+                        if not data: continue
+                        c_idx = next((i for i, h in enumerate(data[0]) if "代號" in h), -1)
+                        p_idx = next((i for i, h in enumerate(data[0]) if "成交" in h and "量" not in h), -1)
+                        if c_idx != -1 and p_idx != -1:
+                            cells = [gspread.Cell(row=r+1, col=p_idx+1, value=price_dict[code]) for r, row in enumerate(data) if r > 0 and (code := str(row[c_idx]).split('.')[0].strip()) in price_dict]
+                            if cells: ws.update_cells(cells); cnt += len(cells)
+                    status.update(label=f"🎉 成功更新 {cnt} 檔！", state="complete")
+                    st.cache_data.clear()
+            except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
+
+    now = datetime.now()
+    lm_month, lm_year = (now.month - 1) or 12, now.year if now.month > 1 else now.year - 1
+    auto_ym = st.sidebar.text_input("設定營收標題 (如: 26M03)", value=f"{str(lm_year)[-2:]}M{str(lm_month).zfill(2)}")
+    if st.sidebar.button("⚡ 2️⃣ 官方月營收更新", type="secondary", use_container_width=True):
+        with st.status(f"鎖定目標欄位【{auto_ym}】...", expanded=True) as status:
+            try:
+                worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
+                target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                if not target_sheets: status.update(label="任務失敗：找不到分頁", state="error")
+                else:
+                    tm_h = auto_ym.strip().upper()
+                    y_roc, q_m = (2000 + int(tm_h[:2])) - 1911, str(int(tm_h[-2:]))
+                    df_all_list = []
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    def cln(val): return v if re.match(r'^-?\d+(\.\d+)?$', (v := str(val).replace(',', '').replace('%', '').strip())) else ""
+
+                    urls = [f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{y_roc}_{q_m}_0", f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{y_roc}_{q_m}_1", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{y_roc}_{q_m}_0", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{y_roc}_{q_m}_1"]
+                    for u in urls:
+                        try:
+                            r = requests.get(u+".html", headers=headers, verify=False, timeout=8)
+                            if r.status_code == 200:
+                                r.encoding = 'big5' 
+                                for row in re.findall(r'<tr[^>]*>(.*?)</tr>', r.text, flags=re.I|re.S):
+                                    cs = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row, flags=re.I|re.S)]
+                                    if len(cs) >= 7 and (m := re.search(r'(?<!\d)(\d{4})(?!\d)', cs[0])) and cln(cs[2]):
+                                        df_all_list.append({'公司代號': m.group(1), '當月營收': cln(cs[2]), '月增率': cln(cs[5]), '年增率': cln(cs[6]), '來源優先級': 2})
+                        except: pass
+                    
+                    if not df_all_list: status.update(label=f"⚠️ 目前尚未公佈 {tm_h} 營收", state="error", expanded=True)
+                    else:
+                        df_early = pd.DataFrame(df_all_list).sort_values('來源優先級').drop_duplicates(subset=['公司代號']) 
+                        cnt = 0
+                        for ws in target_sheets:
+                            data = ws.get_all_values()
+                            if not data: continue
+                            h = data[0]
+                            target_col_idx, mom_col_idx, yoy_col_idx, code_col_idx = -1, -1, -1, -1
+                            for i, header in enumerate(h):
+                                clean_h = str(header).replace('\n', '').replace(' ', '').replace('\r', '').strip()
+                                if "代號" in clean_h: code_col_idx = i + 1
+                                if tm_h in clean_h and "單月營收" in clean_h:
+                                    if "月增" in clean_h: mom_col_idx = i + 1
+                                    elif "年增" in clean_h: yoy_col_idx = i + 1
+                                    elif "增" not in clean_h: target_col_idx = i + 1
+                            
+                            if target_col_idx != -1 and code_col_idx != -1:
+                                row_map = {str(r[code_col_idx-1]).split('.')[0].strip(): idx + 1 for idx, r in enumerate(data) if idx > 0 and len(r) >= code_col_idx and str(r[code_col_idx-1]).strip()}
+                                cells_to_update = []
+                                for _, row in df_early.iterrows():
+                                    code = str(row['公司代號']).strip()
+                                    if code in row_map:
+                                        row_idx = row_map[code]
+                                        if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
+                                        if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
+                                        if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
+                                
+                                if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{tm_h}單月營收月增(%)"))
+                                if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{tm_h}單月營收年增(%)"))
+                                if cells_to_update:
+                                    ws.update_cells(cells_to_update)
+                                    cnt += 1
+                                    
+                        if cnt > 0:
+                            status.update(label=f"🎉 營收成功寫入 {cnt} 張分頁！", state="complete", expanded=False)
+                            st.cache_data.clear()
+                            st.balloons()
+                        else: status.update(label=f"⚠️ 無法更新", state="error", expanded=True)
+            except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(e)
+
+    target_q = st.sidebar.text_input("季報前綴 (如: 25Q4)", value="25Q4")
+    
+    if st.sidebar.button("⚡ 3️⃣ 季報極速 API 清洗站 (安全版)", type="secondary", use_container_width=True):
+        with st.status("執行官方 Open API 安全清洗 (保護毛利不覆蓋)...", expanded=True) as status:
+            try:
+                y_roc, q_num = str((2000 + int(target_q[:2])) - 1911), int(target_q[3])
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                
+                st.write("📡 連線至台灣證交所 Open API 索取綜合損益表...")
+                res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
+                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False, timeout=15).json()
+                
+                curr_dict = {}
+                def ext_val(item, kws, ex=None):
+                    if ex is None: ex = []
+                    for k, v in item.items():
+                        ck = str(k).replace(' ', '').replace('（', '(').replace('）', '')
+                        if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
+                            v_str = str(v).strip()
+                            if v_str and v_str not in ['None', '']:
+                                v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
+                                try: return float(v_str)
+                                except: pass
+                    return 0.0
+
+                for item in (res_twse + res_tpex):
+                    code = str(item.get('公司代號', '')).strip()
+                    if not code or str(item.get('年度', '')).strip() != y_roc or str(item.get('季別', '')).strip() != str(q_num): continue
+                        
+                    eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
+                    has_eps = eps_raw != 0.0
+
+                    rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
+                    gp =
