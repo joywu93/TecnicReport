@@ -7,7 +7,6 @@ from google.oauth2.service_account import Credentials
 import json
 import math
 import numpy as np
-from datetime import datetime
 
 # ==========================================
 # 網頁基本設定 & 響應式 CSS 
@@ -37,7 +36,8 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V186 終極安息穩定版)")
+# 💡 指揮官，請務必確認網頁載入後，這裡是顯示 V187！
+st.title("📊 2026 戰略指揮 (V187 鋼鐵意志版)")
 
 def clear_cache_and_session():
     st.cache_data.clear()
@@ -142,7 +142,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # 🌟 核心快取大腦 
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="🚀 讀取 Google Sheet 資料庫...")
-def fetch_gsheet_data_v186():
+def fetch_gsheet_data_v187():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -215,7 +215,7 @@ def fetch_gsheet_data_v186():
     except Exception as e: return {"error": str(e)}
 
 # 初始化載入快取資料
-cached_data = fetch_gsheet_data_v186()
+cached_data = fetch_gsheet_data_v187()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     db_gen, db_fin = {}, {}
@@ -262,12 +262,11 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
         except: st.experimental_rerun()
 
 # ==========================================
-# 4. 執行與呈現 (V186 物理級防爆矩陣渲染)
+# 4. 執行與呈現 (絕對安全渲染)
 # ==========================================
 def render_dataframe(df_source, is_finance=False, is_single=False):
-    if df_source is None or df_source.empty: return
+    if df_source is None or len(df_source) == 0: return
     
-    # 清理資料與索引
     df = df_source.copy().reset_index(drop=True)
     df = df.loc[:, ~df.columns.duplicated()]
     if "股票名稱" in df.columns:
@@ -281,7 +280,6 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
-    # 全面數值化排毒
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
@@ -292,22 +290,17 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
     f_dict = {c: "{:.2f}%" if "(%)" in c or "%" in c else ("{:.0f}" if "次數" in c else "{:.2f}") for c in df.columns if c != "股票名稱"}
     df_clean = df.set_index("股票名稱")
     
-    # 🩸 核心手術：物理矩陣上色法！完全捨棄會當機的 applymap 和 subset
     def highlight_logic(x):
-        # 建立一個全空的樣式矩陣
         df_style = pd.DataFrame('', index=x.index, columns=x.columns)
         if '前瞻殖利率(%)' in x.columns:
-            # 只有大於條件的格子才會被填入紅色樣式
             mask = pd.to_numeric(x['前瞻殖利率(%)'], errors='coerce').fillna(0) >= threshold
             df_style.loc[mask, '前瞻殖利率(%)'] = 'color: #ff4b4b; font-weight: bold'
         return df_style
 
     try:
-        # 將矩陣安全地覆蓋上去，保證 Streamlit 抓不到任何語法錯誤！
         styler = df_clean.style.apply(highlight_logic, axis=None).format(f_dict)
         st.dataframe(styler, height=calc_height, use_container_width=True)
     except Exception:
-        # 即使天塌下來，最後的物理防護網依然存在
         df_safe = df_clean.copy()
         for c in df_safe.columns:
             if "(%)" in c or "%" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}%")
@@ -329,8 +322,8 @@ with t_vip:
     with c1:
         if st.button("🚀 執行戰略分析", type="primary", use_container_width=True):
             with st.spinner("🔄 正在擷取 Google Sheet 最新數據..."):
-                fetch_gsheet_data_v186.clear() # 強制清除快取
-                fresh_data = fetch_gsheet_data_v186()
+                fetch_gsheet_data_v187.clear() 
+                fresh_data = fetch_gsheet_data_v187()
                 db_gen = fresh_data.get("general", {}) if fresh_data else {}
                 db_fin = fresh_data.get("finance", {}) if fresh_data else {}
             
@@ -350,7 +343,7 @@ with t_vip:
     
     if "df_vip" in st.session_state:
         df = st.session_state["df_vip"]
-        if df is not None and not df.empty:
+        if df is not None and len(df) > 0:
             valid_df = df[df["股票名稱"].astype(bool) & df["股票名稱"].notna() & (df["股票名稱"] != "")]
             opts = sorted([str(x) for x in valid_df["股票名稱"].unique() if str(x).strip()])
             vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
@@ -363,82 +356,76 @@ with t_vip:
             with c1:
                 sel = st.selectbox("📌 搜尋關注個股：", opts, index=d_idx) if opts else None
                 if sel:
-                    row_df = df[df["股票名稱"] == sel].copy()
-                    try: row_list = row_df.to_dict('records')
-                    except Exception: row_list = []
+                    row_df = df[df["股票名稱"] == sel]
+                    
+                    # 🚀 V187: 鋼鐵意志防爆抽取法！長度大於0才去抓，絕對不會 IndexError！
+                    if len(row_df) > 0: 
+                        row = row_df.iloc[0].to_dict()
                         
-                    if row_list: 
-                        try:
-                            row = row_list[0] 
-                            def get_safe_float(val):
-                                if val is None: return 0.0
-                                if isinstance(val, (str, int, float)):
-                                    try: return float(str(val).replace(',', '').replace('%', ''))
-                                    except: return 0.0
-                                return 0.0
-                                
-                            liab_value = get_safe_float(row.get('最新季度流動合約負債(億)', 0)) 
-                            liab_qoq = get_safe_float(row.get('最新季度流動合約負債季增(%)', 0))
-                            safe_price = get_safe_float(row.get('最新股價', 0))
-                            safe_yield = get_safe_float(row.get('前瞻殖利率(%)', 0))
-                            safe_per = get_safe_float(row.get('本益比(PER)', 0))
-                            safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
-                            safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
+                        def get_safe_float(val):
+                            if val is None: return 0.0
+                            try: return float(str(val).replace(',', '').replace('%', ''))
+                            except: return 0.0
                             
-                            st.markdown(
-                                f"**股價 {safe_price:.2f}元** ｜ "
-                                f"殖利率 **{safe_yield:.2f}%**<br>"
-                                f"PER **{safe_per:.2f}** ｜ "
-                                f"EPS **{safe_eps:.2f}元** ｜ "
-                                f"成長率 **{safe_grow:.2f}%** ｜ "
-                                f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
-                                unsafe_allow_html=True
-                            )
+                        liab_value = get_safe_float(row.get('最新季度流動合約負債(億)', 0)) 
+                        liab_qoq = get_safe_float(row.get('最新季度流動合約負債季增(%)', 0))
+                        safe_price = get_safe_float(row.get('最新股價', 0))
+                        safe_yield = get_safe_float(row.get('前瞻殖利率(%)', 0))
+                        safe_per = get_safe_float(row.get('本益比(PER)', 0))
+                        safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
+                        safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
+                        
+                        st.markdown(
+                            f"**股價 {safe_price:.2f}元** ｜ "
+                            f"殖利率 **{safe_yield:.2f}%**<br>"
+                            f"PER **{safe_per:.2f}** ｜ "
+                            f"EPS **{safe_eps:.2f}元** ｜ "
+                            f"成長率 **{safe_grow:.2f}%** ｜ "
+                            f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
+                            unsafe_allow_html=True
+                        )
+                        if is_admin:
                             with st.expander("📝 點此查看預估邏輯"):
                                 st.write(str(row.get('logic_note', '無紀錄')))
-                        except Exception: pass
             
             with c2:
-                if sel and row_list: 
-                    try:
-                        d_viz = []
-                        for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
-                            def clean_val_list(lst, idx):
-                                try:
-                                    if not isinstance(lst, list): return 0.0
-                                    v = lst[idx]
-                                    fv = float(v)
-                                    return fv if not math.isnan(fv) and not math.isinf(fv) else 0.0
-                                except: return 0.0
-                                
-                            d_viz.append({"季度": q, "類別": "A.去年", "項目": "去年實際", "營收(億)": clean_val_list(row.get("_ly_qs", [0,0,0,0]), i)})
+                if sel and len(row_df) > 0:
+                    row = row_df.iloc[0].to_dict()
+                    d_viz = []
+                    for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
+                        def clean_val_list(lst, idx):
+                            try:
+                                if not isinstance(lst, list): return 0.0
+                                return float(lst[idx]) if not math.isnan(float(lst[idx])) and not math.isinf(float(lst[idx])) else 0.0
+                            except: return 0.0
                             
-                            if q == "Q1":
-                                m_revs = [clean_val_list(row.get("_known_q1_months", [0,0,0]), x) for x in range(3)]
-                                if m_revs[0] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "1月營收", "營收(億)": m_revs[0]})
-                                if m_revs[1] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "2月營收", "營收(億)": m_revs[1]})
-                                if m_revs[2] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "3月營收", "營收(億)": m_revs[2]})
-                                if sum(m_revs) == 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": 0}) 
-                            else:
-                                d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": clean_val_list(row.get("_known_qs", [0,0,0,0]), i)})
-                                
-                            d_viz.append({"季度": q, "類別": "C.預估", "項目": "預估標竿", "營收(億)": clean_val_list(row.get("_total_est_qs", [0,0,0,0]), i)})
-                                
-                        bars = alt.Chart(pd.DataFrame(d_viz)).mark_bar().encode(
-                            x=alt.X('類別:N', axis=None), 
-                            y=alt.Y('營收(億):Q', title=None), 
-                            color=alt.Color('項目:N', legend=alt.Legend(title=None, orient="bottom"), 
-                                            scale=alt.Scale(domain=["去年實際", "1月營收", "2月營收", "3月營收", "已公布", "預估標竿"], 
-                                                            range=["#004c6d", "#cce6ff", "#66b2ff", "#0073e6", "#3399ff", "#ff4b4b"])),
-                            order=alt.Order('項目:N', sort='ascending'),
-                            tooltip=alt.value(None),
-                            column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
-                        ).properties(width=55, height=180)
-                        st.altair_chart(bars, use_container_width=False) 
-                    except: pass
+                        d_viz.append({"季度": q, "類別": "A.去年", "項目": "去年實際", "營收(億)": clean_val_list(row.get("_ly_qs", [0,0,0,0]), i)})
+                        
+                        if q == "Q1":
+                            m_revs = [clean_val_list(row.get("_known_q1_months", [0,0,0]), x) for x in range(3)]
+                            if m_revs[0] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "1月營收", "營收(億)": m_revs[0]})
+                            if m_revs[1] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "2月營收", "營收(億)": m_revs[1]})
+                            if m_revs[2] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "3月營收", "營收(億)": m_revs[2]})
+                            if sum(m_revs) == 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": 0}) 
+                        else:
+                            d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": clean_val_list(row.get("_known_qs", [0,0,0,0]), i)})
+                            
+                        d_viz.append({"季度": q, "類別": "C.預估", "項目": "預估標竿", "營收(億)": clean_val_list(row.get("_total_est_qs", [0,0,0,0]), i)})
+                            
+                    bars = alt.Chart(pd.DataFrame(d_viz)).mark_bar().encode(
+                        x=alt.X('類別:N', axis=None), 
+                        y=alt.Y('營收(億):Q', title=None), 
+                        color=alt.Color('項目:N', legend=alt.Legend(title=None, orient="bottom"), 
+                                        scale=alt.Scale(domain=["去年實際", "1月營收", "2月營收", "3月營收", "已公布", "預估標竿"], 
+                                                        range=["#004c6d", "#cce6ff", "#66b2ff", "#0073e6", "#3399ff", "#ff4b4b"])),
+                        order=alt.Order('項目:N', sort='ascending'),
+                        tooltip=alt.value(None),
+                        column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
+                    ).properties(width=55, height=180)
+                    st.altair_chart(bars, use_container_width=False) 
 
             st.divider()
-            if sel and not row_df.empty:
+            if sel and len(row_df) > 0:
                 st.markdown(f"### 🎯 【{sel}】專屬戰情報表")
                 render_dataframe(row_df, is_single=True)
                 st.divider()
@@ -462,8 +449,8 @@ if t_radar:
         
         if st.button("📡 全市場掃描", type="primary"):
             with st.spinner("🔄 正在向 Google Sheet 抓取最新數據..."):
-                fetch_gsheet_data_v186.clear()
-                fresh_data = fetch_gsheet_data_v186()
+                fetch_gsheet_data_v187.clear()
+                fresh_data = fetch_gsheet_data_v187()
                 db_gen = fresh_data.get("general", {}) if fresh_data else {}
                 db_fin = fresh_data.get("finance", {}) if fresh_data else {}
                 
@@ -491,8 +478,8 @@ if t_radar:
 with t_fin:
     if st.button("🛡️ 啟動金融掃描", type="primary"):
         with st.spinner("🔄 正在向 Google Sheet 抓取最新數據..."):
-            fetch_gsheet_data_v186.clear()
-            fresh_data = fetch_gsheet_data_v186()
+            fetch_gsheet_data_v187.clear()
+            fresh_data = fetch_gsheet_data_v187()
             db_gen = fresh_data.get("general", {}) if fresh_data else {}
             db_fin = fresh_data.get("finance", {}) if fresh_data else {}
             
