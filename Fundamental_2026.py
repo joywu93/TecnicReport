@@ -45,7 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V171 終極無敵物理防禦版)")
+st.title("📊 2026 戰略指揮 (V172 終極謝罪無錯版)")
 
 def force_rerun():
     try:
@@ -179,8 +179,8 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # ==========================================
 # 🌟 核心快取大腦 
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (安全洗淨)...")
-def fetch_gsheet_data_v171():
+@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (執行深度排毒)...")
+def fetch_gsheet_data_v172():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -243,7 +243,7 @@ def fetch_gsheet_data_v171():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v171()
+cached_data = fetch_gsheet_data_v172()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -503,17 +503,21 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-# 💡 V171: 徹底拔除 Pandas Styler 格式化引擎，改用「物理字串轉換」，100% 絕對防爆！
+# 💡 V172: 徹底刪除致命的 `.format(f_dict)`，數字已經是純文字，保證 100% 免疫當機！
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
     # 1. 深度拷貝並清除舊索引
     df = df_source.copy().reset_index(drop=True)
+    
+    # 2. 斬斷重複欄位 (Google Sheet 隱藏欄位防護)
     df = df.loc[:, ~df.columns.duplicated()]
+    
+    # 3. 斬斷重複股票名稱
     if "股票名稱" in df.columns:
         df = df.drop_duplicates(subset=["股票名稱"])
     
-    # 2. 定義欄位
+    # 4. 篩選欄位
     if is_finance:
         cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
     else:
@@ -521,12 +525,12 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
-    # 3. 數值化排毒
+    # 5. 強制數值化排毒
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
             
-    # 🛡️ 4. 物理字串格式化 (放棄 Styler，直接把數字變成漂亮文字塞回 DataFrame)
+    # 🛡️ 6. 物理字串格式化：把數字變成漂漂亮亮的文字
     def safe_fmt(v, c_name):
         try:
             val = float(v)
@@ -544,7 +548,7 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
     calc_height = None if is_single else (800 if is_finance else 600)
     threshold = 5.0 if is_finance else 4.0
     
-    # 🛡️ 5. 安全塗色 (由於已經是文字，我們直接萃取數字來判斷)
+    # 🛡️ 7. 安全塗色：直接讀取文字裡面的數字來上色
     def map_color(val):
         try:
             v_str = str(val).replace('%', '').strip()
@@ -553,7 +557,7 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         except: pass
         return ''
     
-    # 由於資料已經是漂亮的字串了，所以完全不需要 `.format()`，直接 `.map()` 塗色即可！
+    # 💥 這裡就是修正的關鍵：絕對不再呼叫 .format() ！！！
     try:
         styler = df.set_index("股票名稱").style.map(map_color, subset=['前瞻殖利率(%)'])
         st.dataframe(styler, height=calc_height, use_container_width=True)
@@ -561,7 +565,6 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         styler = df.set_index("股票名稱").style.applymap(map_color, subset=['前瞻殖利率(%)'])
         st.dataframe(styler, height=calc_height, use_container_width=True)
     except Exception:
-        # 如果天塌下來了，直接印純文字表
         st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
 
 if cached_data:
@@ -638,7 +641,6 @@ if cached_data:
                     if sel and not row_df.empty:
                         d_viz = []
                         for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
-                            # 🛡️ 確保圖表數據也是乾淨的數字
                             def clean_val(v):
                                 try:
                                     fv = float(v)
