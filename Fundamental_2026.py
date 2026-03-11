@@ -45,7 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V178 智慧節流無錯版)")
+st.title("📊 2026 戰略指揮 (V179 終極滿血復活版)")
 
 def force_rerun():
     try:
@@ -177,7 +177,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     }
 
 # ==========================================
-# 🌟 核心快取大腦 (V178 恢復 1 小時快取，避免被 Google 封鎖！)
+# 🌟 核心快取大腦 (V179 恢復防封鎖記憶體保護)
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫...")
 def load_google_sheet_data():
@@ -213,7 +213,7 @@ def load_google_sheet_data():
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
-                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '#n/a', 'n/a', '#div/0!']: return d
+                    if not val_str or val_str.lower() in ['-', 'nan', 'inf', '-inf', 'infinity', '-infinity', '#n/a', 'n/a', '#div/0!']: return d
                     try: 
                         val = float(val_str)
                         if math.isnan(val) or math.isinf(val): return d
@@ -293,7 +293,7 @@ if user_email and st.sidebar.button("💾 儲存 / 更新清單", type="secondar
         force_rerun()
 
 # ==========================================
-# 🌟 引擎：官方自動更新專區 (與 V158 完全一致)
+# 🌟 引擎：官方自動更新專區 (V179 修復空包彈錯誤)
 # ==========================================
 if is_admin:
     st.sidebar.divider()
@@ -303,12 +303,21 @@ if is_admin:
         with st.status("連線官方伺服器...", expanded=True) as status:
             try:
                 headers = {'User-Agent': 'Mozilla/5.0'}
-                res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, verify=False, timeout=10).json()
-                res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers, verify=False, timeout=10).json()
-                price_dict = {str(i.get('Code', '')).strip(): float(i.get('ClosingPrice', '0').replace(',', '')) for i in res_twse if i.get('ClosingPrice')}
-                price_dict.update({str(i.get('SecuritiesCompanyCode', '')).strip(): float(i.get('Close', '0').replace(',', '')) for i in res_tpex if i.get('Close')})
+                # 🛡️ 加入防空包彈檢測 (isinstance list)，防止政府伺服器沒有回傳資料導致 TypeError
+                try: res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, verify=False, timeout=10).json()
+                except: res_twse = []
                 
-                if not price_dict: status.update(label="⚠️ 無法取得報價。", state="error")
+                try: res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", headers=headers, verify=False, timeout=10).json()
+                except: res_tpex = []
+
+                price_dict = {}
+                if isinstance(res_twse, list):
+                    price_dict.update({str(i.get('Code', '')).strip(): float(i.get('ClosingPrice', '0').replace(',', '')) for i in res_twse if i.get('ClosingPrice')})
+                if isinstance(res_tpex, list):
+                    price_dict.update({str(i.get('SecuritiesCompanyCode', '')).strip(): float(i.get('Close', '0').replace(',', '')) for i in res_tpex if i.get('Close')})
+                
+                if not price_dict: 
+                    status.update(label="⚠️ 無法取得報價 (API 無回應或超時)。", state="error")
                 else:
                     worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
                     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
@@ -322,6 +331,7 @@ if is_admin:
                             cells = [gspread.Cell(row=r+1, col=p_idx+1, value=price_dict[code]) for r, row in enumerate(data) if r > 0 and (code := str(row[c_idx]).split('.')[0].strip()) in price_dict]
                             if cells: ws.update_cells(cells); cnt += len(cells)
                     status.update(label=f"🎉 成功更新 {cnt} 檔！", state="complete")
+                    st.cache_data.clear()
             except Exception as e: status.update(label="錯誤", state="error"); st.error(e)
 
     now = datetime.now()
@@ -388,6 +398,7 @@ if is_admin:
                                     
                         if cnt > 0:
                             status.update(label=f"🎉 營收成功寫入 {cnt} 張分頁！", state="complete", expanded=False)
+                            st.cache_data.clear()
                             st.balloons()
                         else: status.update(label=f"⚠️ 無法更新", state="error", expanded=True)
             except Exception as e: status.update(label="任務中斷", state="error", expanded=True); st.error(e)
@@ -491,6 +502,7 @@ if is_admin:
                                         cells.append(gspread.Cell(row=r+1, col=i_no+1, value=round((curr["nonop"]/curr["pretax"])*100, 2)))
                             if cells: ws.update_cells(cells); cnt += len(cells)
                     status.update(label=f"🎉 安全清洗完成！成功更新 {cnt} 格 (EPS 與 業外已補齊)", state="complete")
+                    st.cache_data.clear()
             except Exception as e: 
                 if "NameResolutionError" in str(e) or "Max retries exceeded" in str(e):
                     status.update(label="❌ 雲端網路暫時斷線，請稍後再試", state="error")
@@ -498,29 +510,70 @@ if is_admin:
                     status.update(label="錯誤", state="error"); st.error(e)
 
 # ==========================================
-# 4. 執行與呈現 (V178 徹底拔除高亮與樣式)
+# 4. 執行與呈現 
 # ==========================================
-def render_dataframe(df_source, is_finance=False):
+# 💡 V179: 終極防爆渲染，找回紅色高亮與專屬報表！
+def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
-    # 強制拷貝並洗去所有潛在錯誤數值，化繁為簡！
+    # 1. 深度拷貝並清除舊索引
     df = df_source.copy().reset_index(drop=True)
-    df = df.replace([np.inf, -np.inf, np.nan], 0.0).fillna(0.0)
+    
+    # 2. 斬斷重複欄位 (防護隱藏欄位)
     df = df.loc[:, ~df.columns.duplicated()]
+    
+    # 3. 斬斷重複股票名稱
     if "股票名稱" in df.columns:
         df = df.drop_duplicates(subset=["股票名稱"])
     
+    # 4. 篩選欄位
     if is_finance:
         cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
-        df = df[[c for c in cols if c in df.columns]]
-        f_dict = {c: "{:.2f}%" if "(%)" in c else ("{:.0f}" if "次數" in c else "{:.2f}") for c in df.columns if c != "股票名稱"}
-        # 完全沒有 style.map！100% 不會當機！
-        st.dataframe(df.set_index("股票名稱").style.format(f_dict), height=800, use_container_width=True)
     else:
         cols = ["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]
-        df = df[[c for c in cols if c in df.columns]]
-        f_dict = {c: "{:.2f}%" if "(%)" in c or "%" in c else "{:.2f}" for c in df.columns if c != "股票名稱"}
-        st.dataframe(df.set_index("股票名稱").style.format(f_dict), height=600, use_container_width=True)
+        
+    df = df[[c for c in cols if c in df.columns]]
+    
+    # 5. 強制數值化排毒 (確保所有欄位都是乾淨的浮點數，絕對不會有文字混入)
+    for c in df.columns:
+        if c != "股票名稱":
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+            
+    calc_height = None if is_single else (800 if is_finance else 600)
+    threshold = 5.0 if is_finance else 4.0
+    
+    # 6. 安全格式化字典
+    f_dict = {}
+    for c in df.columns:
+        if c == "股票名稱": continue
+        if "(%)" in c or "%" in c: f_dict[c] = "{:.2f}%"
+        elif "次數" in c: f_dict[c] = "{:.0f}"
+        else: f_dict[c] = "{:.2f}"
+        
+    # 7. 安全塗色邏輯
+    def map_color(val):
+        try:
+            if float(val) >= threshold:
+                return 'color: #ff4b4b; font-weight: bold'
+        except: pass
+        return ''
+        
+    # 🛡️ 8. 嘗試正常渲染 (包含紅色高亮)
+    try:
+        df_clean = df.set_index("股票名稱")
+        if hasattr(df_clean.style, 'map'):
+            styler = df_clean.style.map(map_color, subset=['前瞻殖利率(%)']).format(f_dict)
+        else:
+            styler = df_clean.style.applymap(map_color, subset=['前瞻殖利率(%)']).format(f_dict)
+        st.dataframe(styler, height=calc_height, use_container_width=True)
+    except Exception:
+        # 萬一 Styler 又崩潰，物理字串轉換備用模式 (沒有顏色，但絕對有資料，保證不當機)
+        for c in df.columns:
+            if c != "股票名稱":
+                if "(%)" in c or "%" in c: df[c] = df[c].apply(lambda x: f"{x:.2f}%")
+                elif "次數" in c: df[c] = df[c].apply(lambda x: f"{int(x)}")
+                else: df[c] = df[c].apply(lambda x: f"{x:.2f}")
+        st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
 
 if cached_data:
     db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
@@ -630,7 +683,13 @@ if cached_data:
                         ).properties(width=55, height=180)
                         st.altair_chart(bars, use_container_width=False) 
 
+                # 💡 找回專屬戰情報表！
                 st.divider()
+                if sel and not row_df.empty:
+                    st.markdown(f"### 🎯 【{sel}】專屬戰情報表")
+                    render_dataframe(row_df, is_single=True)
+                    st.divider()
+                
                 st.markdown("### 📋 關注清單總表")
                 render_dataframe(df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False]))
 
