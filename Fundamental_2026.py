@@ -45,7 +45,8 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V181 雲端強制貫穿版)")
+# 💡 V182 標題確認法：只要這裡不是 V182，就代表雲端沒更新！
+st.title("📊 2026 戰略指揮 (V182 雲端同步確認版)")
 
 def force_rerun():
     try:
@@ -179,8 +180,8 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # ==========================================
 # 🌟 核心快取大腦 
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (V181 強制突破版)...")
-def fetch_gsheet_data_v181():
+@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (V182 強制突破版)...")
+def fetch_gsheet_data_v182():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -256,7 +257,7 @@ def fetch_gsheet_data_v181():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v181()
+cached_data = fetch_gsheet_data_v182()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -521,61 +522,66 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
+# 💡 V182: 全面包覆 Try-Except 防爆結界
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
-    df = df_source.copy().reset_index(drop=True)
-    df = df.loc[:, ~df.columns.duplicated()]
-    if "股票名稱" in df.columns:
-        df["股票名稱"] = df["股票名稱"].astype(str).str.strip()
-        df = df.drop_duplicates(subset=["股票名稱"], keep='first')
-    
-    if is_finance:
-        cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
-    else:
-        cols = ["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]
-        
-    df = df[[c for c in cols if c in df.columns]]
-    
-    for c in df.columns:
-        if c != "股票名稱":
-            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
-            
-    calc_height = None if is_single else (800 if is_finance else 600)
-    threshold = 5.0 if is_finance else 4.0
-    
-    f_dict = {}
-    for c in df.columns:
-        if c == "股票名稱": continue
-        if "(%)" in c or "%" in c: f_dict[c] = "{:.2f}%"
-        elif "次數" in c: f_dict[c] = "{:.0f}"
-        else: f_dict[c] = "{:.2f}"
-        
-    def style_yield(s):
-        styles = []
-        for v in s:
-            try:
-                if float(v) >= threshold: styles.append('color: #ff4b4b; font-weight: bold')
-                else: styles.append('')
-            except: styles.append('')
-        return styles
-
-    df_clean = df.set_index("股票名稱")
-    
     try:
-        if '前瞻殖利率(%)' in df_clean.columns:
-            styler = df_clean.style.apply(style_yield, subset=['前瞻殖利率(%)']).format(f_dict)
+        df = df_source.copy().reset_index(drop=True)
+        df = df.loc[:, ~df.columns.duplicated()]
+        if "股票名稱" in df.columns:
+            df["股票名稱"] = df["股票名稱"].astype(str).str.strip()
+            df = df.drop_duplicates(subset=["股票名稱"], keep='first')
+        
+        if is_finance:
+            cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
         else:
-            styler = df_clean.style.format(f_dict)
-        _ = styler.to_html() 
-        st.dataframe(styler, height=calc_height, use_container_width=True)
+            cols = ["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]
+            
+        df = df[[c for c in cols if c in df.columns]]
+        
+        for c in df.columns:
+            if c != "股票名稱":
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+                
+        calc_height = None if is_single else (800 if is_finance else 600)
+        threshold = 5.0 if is_finance else 4.0
+        
+        f_dict = {}
+        for c in df.columns:
+            if c == "股票名稱": continue
+            if "(%)" in c or "%" in c: f_dict[c] = "{:.2f}%"
+            elif "次數" in c: f_dict[c] = "{:.0f}"
+            else: f_dict[c] = "{:.2f}"
+            
+        def style_yield(s):
+            styles = []
+            for v in s:
+                try:
+                    if float(v) >= threshold: styles.append('color: #ff4b4b; font-weight: bold')
+                    else: styles.append('')
+                except: styles.append('')
+            return styles
+
+        df_clean = df.set_index("股票名稱")
+        
+        try:
+            if '前瞻殖利率(%)' in df_clean.columns:
+                styler = df_clean.style.apply(style_yield, subset=['前瞻殖利率(%)']).format(f_dict)
+            else:
+                styler = df_clean.style.format(f_dict)
+            _ = styler.to_html() 
+            st.dataframe(styler, height=calc_height, use_container_width=True)
+        except Exception:
+            df_safe = df_clean.copy()
+            for c in df_safe.columns:
+                if "(%)" in c or "%" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}%")
+                elif "次數" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{int(x)}")
+                else: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}")
+            st.dataframe(df_safe, height=calc_height, use_container_width=True)
     except Exception:
-        df_safe = df_clean.copy()
-        for c in df_safe.columns:
-            if "(%)" in c or "%" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}%")
-            elif "次數" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{int(x)}")
-            else: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}")
-        st.dataframe(df_safe, height=calc_height, use_container_width=True)
+        # 絕對防禦的最後底線：有資料就好！
+        st.dataframe(df_source, use_container_width=True)
 
 if cached_data:
     db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
@@ -606,14 +612,14 @@ if cached_data:
         if "df_vip" in st.session_state:
             df = st.session_state["df_vip"]
             if df is not None and not df.empty:
+                # 🛡️ 確保清單不是空的
                 valid_df = df[df["股票名稱"].astype(bool) & df["股票名稱"].notna() & (df["股票名稱"] != "")]
                 opts = sorted([str(x) for x in valid_df["股票名稱"].unique() if str(x).strip()])
                 vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
                 
                 d_idx = 0
                 if vips and opts:
-                    try:
-                        d_idx = next((i for i, o in enumerate(opts) if str(o).startswith(vips[0])), 0)
+                    try: d_idx = next((i for i, o in enumerate(opts) if str(o).startswith(vips[0])), 0)
                     except: pass
                 
                 with c1:
@@ -621,42 +627,47 @@ if cached_data:
                     if sel:
                         row_df = df[df["股票名稱"] == sel].copy()
                         
-                        # 🚀 V181 物理消滅 iloc！改用「字典法」抽取，百分之百防爆！
-                        row_list = row_df.to_dict('records')
-                        
-                        if row_list: # 如果成功抽出來，裡面有東西
-                            row = row_list[0] # 取第一筆字典，這裡絕對不會出現 IndexError！
+                        # 🚀 V182: 物理消滅 iloc！改用字典法抽取，百分之百防爆！
+                        try:
+                            row_list = row_df.to_dict('records')
+                        except Exception:
+                            row_list = []
                             
-                            def get_safe_float(val):
-                                if val is None: return 0.0
-                                if isinstance(val, (str, int, float)):
-                                    try: return float(str(val).replace(',', '').replace('%', ''))
-                                    except: return 0.0
-                                return 0.0
+                        if row_list: 
+                            try:
+                                row = row_list[0] # 取第一筆字典，這裡絕對不會出現 IndexError！
                                 
-                            liab_value = get_safe_float(row.get('最新季度流動合約負債(億)', 0)) 
-                            liab_qoq = get_safe_float(row.get('最新季度流動合約負債季增(%)', 0))
-                            safe_price = get_safe_float(row.get('最新股價', 0))
-                            safe_yield = get_safe_float(row.get('前瞻殖利率(%)', 0))
-                            safe_per = get_safe_float(row.get('本益比(PER)', 0))
-                            safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
-                            safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
-                            
-                            st.markdown(
-                                f"**股價 {safe_price:.2f}元** ｜ "
-                                f"殖利率 **{safe_yield:.2f}%**<br>"
-                                f"PER **{safe_per:.2f}** ｜ "
-                                f"EPS **{safe_eps:.2f}元** ｜ "
-                                f"成長率 **{safe_grow:.2f}%** ｜ "
-                                f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
-                                unsafe_allow_html=True
-                            )
-                            if is_admin:
-                                with st.expander("📝 點此查看預估邏輯"):
-                                    st.write(str(row.get('logic_note', '無紀錄')))
+                                def get_safe_float(val):
+                                    if val is None: return 0.0
+                                    if isinstance(val, (str, int, float)):
+                                        try: return float(str(val).replace(',', '').replace('%', ''))
+                                        except: return 0.0
+                                    return 0.0
+                                    
+                                liab_value = get_safe_float(row.get('最新季度流動合約負債(億)', 0)) 
+                                liab_qoq = get_safe_float(row.get('最新季度流動合約負債季增(%)', 0))
+                                safe_price = get_safe_float(row.get('最新股價', 0))
+                                safe_yield = get_safe_float(row.get('前瞻殖利率(%)', 0))
+                                safe_per = get_safe_float(row.get('本益比(PER)', 0))
+                                safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
+                                safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
+                                
+                                st.markdown(
+                                    f"**股價 {safe_price:.2f}元** ｜ "
+                                    f"殖利率 **{safe_yield:.2f}%**<br>"
+                                    f"PER **{safe_per:.2f}** ｜ "
+                                    f"EPS **{safe_eps:.2f}元** ｜ "
+                                    f"成長率 **{safe_grow:.2f}%** ｜ "
+                                    f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
+                                    unsafe_allow_html=True
+                                )
+                                if is_admin:
+                                    with st.expander("📝 點此查看預估邏輯"):
+                                        st.write(str(row.get('logic_note', '無紀錄')))
+                            except Exception: pass
                 
                 with c2:
-                    if sel and row_list: # 同樣使用字典法判斷
+                    if sel and row_list: 
                         try:
                             d_viz = []
                             for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
@@ -740,7 +751,7 @@ if cached_data:
                     else: st.success(f"命中 {len(res_list)} 檔！"); render_dataframe(pd.DataFrame(res_list).sort_values(by=['前瞻殖利率(%)', '季成長率(YoY)%'], ascending=[False, False]))
 
     with t_fin:
-        if st.button("🛡️ 啟動金融掃描", type="primary"):
+        if st.button("🛡️ 啟推金融掃描", type="primary"):
             with st.spinner("篩選中..."):
                 res_list = [financial_strategic_model(d["name"], c.strip(), simulated_month, d, simulated_month) for c, d in db_fin.items() if d.get("pbr",0) > 0]
                 if not res_list: st.warning("無符合條件的金融股")
