@@ -45,7 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V173 終極防爆保證版)")
+st.title("📊 2026 戰略指揮 (V174 斷尾求生純淨版)")
 
 def force_rerun():
     try:
@@ -179,8 +179,8 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # ==========================================
 # 🌟 核心快取大腦 
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (執行深度排毒)...")
-def fetch_gsheet_data_v173():
+@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (執行純淨讀取)...")
+def fetch_gsheet_data_v174():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -209,6 +209,7 @@ def fetch_gsheet_data_v173():
                 code = str(row[c_code]).split('.')[0].strip() if c_code and pd.notna(row[c_code]) else ""
                 if len(code) < 3: continue 
                 
+                # 🛡️ 終極排毒濾水器
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
@@ -242,7 +243,7 @@ def fetch_gsheet_data_v173():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v173()
+cached_data = fetch_gsheet_data_v174()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -467,6 +468,7 @@ if is_admin:
                                     if curr["has_eps"]:
                                         f_eps = curr["eps"]
                                         try:
+                                            # 防空包彈 EPS 扣除法
                                             def get_v(idx):
                                                 if idx == -1: return 0.0
                                                 v = str(row[idx]).replace(',', '').strip()
@@ -502,11 +504,11 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
-# 💡 V173: 絕對防禦機制，完全捨棄格式化語法，保證 100% 免疫任何當機！
+# 💡 V174: 物理切除手術！完全拔除 pandas style，直接輸出純淨 DataFrame，0% 當機機率！
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
-    # 1. 安全環境準備
+    # 1. 斬斷重複與無效索引
     df = df_source.copy().reset_index(drop=True)
     df = df.loc[:, ~df.columns.duplicated()]
     if "股票名稱" in df.columns:
@@ -525,7 +527,7 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
             
-    # 4. 物理轉換 (把數字自己加上小數點變成字串)
+    # 4. 物理字串轉換 (保證顯示漂亮，且絕對不當機)
     def safe_fmt(v, c_name):
         try:
             val = float(v)
@@ -541,28 +543,9 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
             df[c] = df[c].apply(lambda x: safe_fmt(x, c))
             
     calc_height = None if is_single else (800 if is_finance else 600)
-    threshold = 5.0 if is_finance else 4.0
     
-    # 5. 上色邏輯
-    def map_color(val):
-        try:
-            v_str = str(val).replace('%', '').strip()
-            if v_str != '-' and float(v_str) >= threshold:
-                return 'color: #ff4b4b; font-weight: bold'
-        except: pass
-        return ''
-    
-    # 🛡️ 6. 終極防爆：只要出錯，立刻給您最乾淨的純淨表格！
-    df_clean = df.set_index("股票名稱")
-    try:
-        if hasattr(df_clean.style, 'map'):
-            styler = df_clean.style.map(map_color, subset=['前瞻殖利率(%)'])
-        else:
-            styler = df_clean.style.applymap(map_color, subset=['前瞻殖利率(%)'])
-        st.dataframe(styler, height=calc_height, use_container_width=True)
-    except Exception:
-        # 只要有任何例外，直接印出，不加任何樣式！
-        st.dataframe(df_clean, height=calc_height, use_container_width=True)
+    # 🛡️ 5. 終極輸出：直接將 DataFrame 交給 Streamlit，拒絕任何 Style 裝飾！
+    st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
 
 if cached_data:
     db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
@@ -609,7 +592,6 @@ if cached_data:
                             liab_value = row.get('最新季度流動合約負債(億)', 0) 
                             liab_qoq = row.get('最新季度流動合約負債季增(%)', 0)
                             
-                            # 🛡️ 安全字串轉換
                             try: safe_price = float(row['最新股價']) if pd.notna(row['最新股價']) else 0.0
                             except: safe_price = 0.0
                             try: safe_yield = float(row['前瞻殖利率(%)']) if pd.notna(row['前瞻殖利率(%)']) else 0.0
