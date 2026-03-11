@@ -61,18 +61,25 @@ def fetch_and_update():
 
     curr_dict = {}
     
-    def ext_val(item, kws, ex=None):
+    def ext_val(item, kws, ex=None, code="", debug_name=""):
         if ex is None: ex = []
+        vals = []
         for k, v in item.items():
             ck = str(k).replace(' ', '').replace('（', '(').replace('）', '')
             if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
                 v_str = str(v).strip()
+                # 專屬監視器：印出官方到底給了什麼欄位
+                if code in ["3023", "3030"]:
+                    print(f"  [偵測 {code}] {debug_name} 匹配到欄位: '{k}' -> 數值: '{v_str}'")
+                
                 if v_str and v_str not in ['None', '']:
                     v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
                     try: 
                         val = float(v_str)
-                        if val != 0: return val  
+                        if val != 0: vals.append(val)
                     except: pass
+        if vals:
+            return vals[-1] # 如果有很多個，取最後一個(通常是淨額)
         return 0.0
 
     for item in (res_twse + res_tpex):
@@ -80,20 +87,19 @@ def fetch_and_update():
         if not code or str(item.get('年度', '')).strip() != TARGET_YEAR_ROC or str(item.get('季別', '')).strip() != str(TARGET_Q): 
             continue
             
-        eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
-        rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
-        
-        # 🌟 關鍵修復：放寬搜尋條件為 '毛利'，確保所有公司都能抓到
-        gp = ext_val(item, ['毛利', '毛損'], ex=['未實現', '已實現'])
-        op = ext_val(item, ['營業利益', '營業損失', '營業損益', '營業淨利'])
+        if code in ["3023", "3030"]:
+            print(f"\n--- 發現 {code} 官方原始資料 ---")
+            
+        eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'], code=code, debug_name="【EPS】")
+        rev = ext_val(item, ['營業收入', '淨收益', '營業收益'], code=code, debug_name="【營收】")
+        gp = ext_val(item, ['毛利', '毛損'], ex=['未實現', '已實現'], code=code, debug_name="【毛利】")
+        op = ext_val(item, ['營業利益', '營業損失', '營業損益', '營業淨利'], code=code, debug_name="【營益】")
         
         gm_percent = round((gp / rev) * 100, 2) if rev > 0 else 0.0
         om_percent = round((op / rev) * 100, 2) if rev > 0 else 0.0
 
-        # 🌟 專屬監視器：讓您在日誌中直接看到 3023 和 3030 抓到了什麼
         if code in ["3023", "3030"]:
-            print(f"👉 測試觀察 {code}: 營收={rev}, 毛利={gp}, 營業利益={op}, 累計EPS={eps_raw}")
-            print(f"👉 換算結果 {code}: 累計毛利率={gm_percent}%, 累計營益率={om_percent}%")
+            print(f"👉 最終換算 {code}: 營收={rev}, 毛利={gp}, 營益={op} -> 毛利率={gm_percent}%, 營益率={om_percent}%\n")
 
         if code in curr_dict and rev <= curr_dict[code]["rev"]: continue
         curr_dict[code] = {"rev": rev, "gm": gm_percent, "om": om_percent, "eps_cumulative": eps_raw}
@@ -111,7 +117,6 @@ def fetch_and_update():
         i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
         i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in str(x).replace(' ','')), -1)
         
-        # 🌟 關鍵修復：確保尋找並準備寫入「最新累季每股盈餘」
         i_ae = next((i for i, x in enumerate(h) if COL_NAME_CUM_EPS in str(x).replace(' ','')), -1)
         i_gm = next((i for i, x in enumerate(h) if COL_NAME_CUM_GM in str(x).replace(' ','') and "增" not in str(x)), -1)
         i_om = next((i for i, x in enumerate(h) if COL_NAME_CUM_OM in str(x).replace(' ','') and "增" not in str(x)), -1)
@@ -140,14 +145,13 @@ def fetch_and_update():
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
-                    
-                    # 🌟 寫入最新累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
 
-                    if i_gm != -1 and curr["gm"] != 0:
+                    # 🌟 關鍵測試：強制寫入毛利率與營益率 (就算算出 0 也寫入)
+                    if i_gm != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_gm+1, value=curr["gm"]))
-                    if i_om != -1 and curr["om"] != 0:
+                    if i_om != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_om+1, value=curr["om"]))
             
             if cells_to_update:
