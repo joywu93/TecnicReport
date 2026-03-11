@@ -45,7 +45,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V181 光速引擎極致版)")
+st.title("📊 2026 戰略指揮 (V182 終極破壁黃金版)")
 
 def force_rerun():
     try:
@@ -177,10 +177,10 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     }
 
 # ==========================================
-# 🌟 核心快取大腦 (V181 光速單次讀取優化版)
+# 🌟 核心快取大腦 (V182 光速讀取，永不無限打轉)
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner="🚀 連線至雙核大數據庫 (光速讀取中)...")
-def fetch_gsheet_data_v181():
+def fetch_gsheet_data_v182():
     try:
         client = get_gspread_client()
         worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -188,7 +188,6 @@ def fetch_gsheet_data_v181():
         gen_dfs = []
         fin_dfs = []
         
-        # 💡 光速優化：每個分頁「只下載一次資料」，徹底解決無限打轉與 429 API 超限問題！
         for ws in worksheets:
             if "個股總表" in ws.title:
                 data = ws.get_all_values()
@@ -224,7 +223,7 @@ def fetch_gsheet_data_v181():
                 code = str(row[c_code]).split('.')[0].strip() if c_code and pd.notna(row[c_code]) else ""
                 if len(code) < 3: continue 
                 
-                # 🛡️ 終極排毒濾水器
+                # 🛡️ 底層排毒防護網
                 def v(c_name, d=0.0):
                     if not c_name or pd.isna(row[c_name]): return d
                     val_str = str(row[c_name]).replace(',', '').strip()
@@ -258,7 +257,7 @@ def fetch_gsheet_data_v181():
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
 
-cached_data = fetch_gsheet_data_v181()
+cached_data = fetch_gsheet_data_v182()
 if cached_data and "error" in cached_data:
     st.error(f"檔案解析失敗，請確認連結與權限。錯誤：{cached_data['error']}")
     cached_data = None
@@ -266,9 +265,9 @@ if cached_data and "error" in cached_data:
 # ==========================================
 # 側邊欄：登入與動態權限判斷
 # ==========================================
-if st.sidebar.button("🔄 重新載入最新表單資料", type="primary", use_container_width=True):
+if st.sidebar.button("🔄 重新載入最新表單資料 (清除雲端暫存)", type="primary", use_container_width=True):
     clear_cache_and_session()
-    st.sidebar.success("✅ 雲端記憶已清除！即將為您光速抓取最新資料！")
+    st.sidebar.success("✅ 雲端記憶已清除！請您手動刷新網頁 (Ctrl+F5) 以確保最新狀態！")
     time.sleep(1)
     force_rerun()
 
@@ -488,6 +487,7 @@ if is_admin:
                                     if curr["has_eps"]:
                                         f_eps = curr["eps"]
                                         try:
+                                            # 防空包彈 EPS 扣除法
                                             def get_v(idx):
                                                 if idx == -1: return 0.0
                                                 v = str(row[idx]).replace(',', '').strip()
@@ -523,14 +523,18 @@ if is_admin:
 # ==========================================
 # 4. 執行與呈現
 # ==========================================
+# 💡 V182: 終極防爆試畫機制！把錯誤悶死在後台，絕對不讓網頁當機！
 def render_dataframe(df_source, is_finance=False, is_single=False):
     if df_source is None or df_source.empty: return
     
+    # 1. 深度洗淨：清除舊索引、去除重複名稱的隱藏地雷
     df = df_source.copy().reset_index(drop=True)
     df = df.loc[:, ~df.columns.duplicated()]
     if "股票名稱" in df.columns:
-        df = df.drop_duplicates(subset=["股票名稱"])
+        df["股票名稱"] = df["股票名稱"].astype(str).str.strip()
+        df = df.drop_duplicates(subset=["股票名稱"], keep='first')
     
+    # 2. 定義欄位
     if is_finance:
         cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "當季預估均營收(億)"]
     else:
@@ -538,6 +542,7 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         
     df = df[[c for c in cols if c in df.columns]]
     
+    # 3. 強制數值化排毒
     for c in df.columns:
         if c != "股票名稱":
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
@@ -552,27 +557,40 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
         elif "次數" in c: f_dict[c] = "{:.0f}"
         else: f_dict[c] = "{:.2f}"
         
-    def map_color(val):
-        try:
-            if float(val) >= threshold:
-                return 'color: #ff4b4b; font-weight: bold'
-        except: pass
-        return ''
-        
+    # 4. 安全著色函數
+    def style_yield(s):
+        styles = []
+        for v in s:
+            try:
+                if float(v) >= threshold: styles.append('color: #ff4b4b; font-weight: bold')
+                else: styles.append('')
+            except: styles.append('')
+        return styles
+
+    df_clean = df.set_index("股票名稱")
+    
+    # 🛡️ 5. 後台試畫防禦罩 (Force Evaluation)
     try:
-        df_clean = df.set_index("股票名稱")
-        if hasattr(df_clean.style, 'map'):
-            styler = df_clean.style.map(map_color, subset=['前瞻殖利率(%)']).format(f_dict)
+        if '前瞻殖利率(%)' in df_clean.columns:
+            styler = df_clean.style.apply(style_yield, subset=['前瞻殖利率(%)']).format(f_dict)
         else:
-            styler = df_clean.style.applymap(map_color, subset=['前瞻殖利率(%)']).format(f_dict)
+            styler = df_clean.style.format(f_dict)
+            
+        # 關鍵指令：強制系統在後台先畫一次。如果會爆炸，這裡就會跳 Error 進入 Except！
+        _ = styler.to_html() 
+        
+        # 安全過關，放心交給網頁
         st.dataframe(styler, height=calc_height, use_container_width=True)
+        
     except Exception:
-        for c in df.columns:
-            if c != "股票名稱":
-                if "(%)" in c or "%" in c: df[c] = df[c].apply(lambda x: f"{x:.2f}%")
-                elif "次數" in c: df[c] = df[c].apply(lambda x: f"{int(x)}")
-                else: df[c] = df[c].apply(lambda x: f"{x:.2f}")
-        st.dataframe(df.set_index("股票名稱"), height=calc_height, use_container_width=True)
+        # 💣 發現爆炸！立刻切換到純粹的安全備用模式 (物理字串轉換)
+        df_safe = df_clean.copy()
+        for c in df_safe.columns:
+            if "(%)" in c or "%" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}%")
+            elif "次數" in c: df_safe[c] = df_safe[c].apply(lambda x: f"{int(x)}")
+            else: df_safe[c] = df_safe[c].apply(lambda x: f"{x:.2f}")
+            
+        st.dataframe(df_safe, height=calc_height, use_container_width=True)
 
 if cached_data:
     db_gen, db_fin = cached_data.get("general", {}), cached_data.get("finance", {})
@@ -603,6 +621,7 @@ if cached_data:
         if "df_vip" in st.session_state:
             df = st.session_state["df_vip"]
             if df is not None and not df.empty:
+                # 🛡️ 確保清單不是空的，防止 IndexError
                 valid_df = df[df["股票名稱"].astype(bool) & df["股票名稱"].notna() & (df["股票名稱"] != "")]
                 opts = sorted([str(x) for x in valid_df["股票名稱"].unique() if str(x).strip()])
                 vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
@@ -617,6 +636,7 @@ if cached_data:
                     sel = st.selectbox("📌 搜尋關注個股：", opts, index=d_idx) if opts else None
                     if sel:
                         row_df = df[df["股票名稱"] == sel].copy()
+                        # 🛡️ 終極防護網：如果抽出來的資料是空的，絕對不允許抓取！
                         if not row_df.empty:
                             try:
                                 row = row_df.iloc[0]
