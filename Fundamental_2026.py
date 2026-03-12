@@ -45,7 +45,8 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V01版)")
+# 💡 V182 標題確認法
+st.title("📊 2026 戰略指揮 (V182 比例推演版)")
 
 def force_rerun():
     try:
@@ -84,7 +85,7 @@ def get_realtime_price(code, default_price):
     return default_price
 
 # ==========================================
-# 📊 核心大腦一：一般/成長股預估引擎
+# 📊 核心大腦一：一般/成長股預估引擎 (全面升級比例推算法)
 # ==========================================
 def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this_1, rev_this_2, rev_this_3, base_q_eps, non_op_ratio, base_q_avg_rev, ly_q1_rev, ly_q2_rev, ly_q3_rev, ly_q4_rev, y1_q1_rev, y1_q2_rev, y1_q3_rev, y1_q4_rev, recent_payout_ratio, current_price, contract_liab, contract_liab_qoq, acc_eps, declared_div):
     try:
@@ -98,31 +99,54 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     else: sim_rev_1, sim_rev_2, sim_rev_3 = rev_this_1, rev_this_2, rev_this_3
 
     actual_known_q1 = sum([v for v in [sim_rev_1, sim_rev_2, sim_rev_3] if v > 0])
-    static_q1_est_total = ((rev_last_11 + rev_last_12) / 2) * 3
-    q1_yoy = ((static_q1_est_total - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
-    est_q1_eps_display = base_q_eps * (1 - (non_op_ratio / 100)) * (((rev_last_11 + rev_last_12) / 2) / base_q_avg_rev) if base_q_avg_rev > 0 else 0
+    
+    # === 核心升級：依照使用者提供之歷史比例推算法 ===
+    # 1. 計算淡旺季基準比率 (加入防呆機制，避免歷史數據為 0 導致錯誤)
+    ratio_q1 = ly_q1_rev / y1_q4_rev if y1_q4_rev > 0 else 1.0
+    
+    sum_q2_history = y1_q2_rev + ly_q2_rev
+    sum_q3_history = y1_q3_rev + ly_q3_rev
+    sum_q4_history = y1_q4_rev + ly_q4_rev
+    
+    ratio_q3 = sum_q3_history / sum_q2_history if sum_q2_history > 0 else 1.0
+    ratio_q4 = sum_q4_history / sum_q3_history if sum_q3_history > 0 else 1.0
 
-    if current_month <= 1: dynamic_base_avg, formula_note = (rev_last_11 + rev_last_12) / 2, "推演1月(全未知)"
-    elif current_month == 2: dynamic_base_avg, formula_note = sim_rev_1 * 0.9 if sim_rev_1 > 0 else (rev_last_11 + rev_last_12) / 2, "推演2月(知1月)"
+    # 2. 推算四季營收
+    base_11_12_avg = (rev_last_11 + rev_last_12) / 2
+    
+    # Q1 = 去年度11與12月均值 * 3 * (去年度Q1 / 前年度Q4)
+    est_q1_rev = (base_11_12_avg * 3) * ratio_q1
+    
+    # Q2 = Q1 (保守估計持平)
+    est_q2_rev = est_q1_rev
+    
+    # Q3 = Q2 * (近兩年Q3和 / 近兩年Q2和)
+    est_q3_rev = est_q2_rev * ratio_q3
+    
+    # Q4 = Q3 * (近兩年Q4和 / 近兩年Q3和)
+    est_q4_rev = est_q3_rev * ratio_q4
+
+    # 全年總營收預估
+    est_total_rev = est_q1_rev + est_q2_rev + est_q3_rev + est_q4_rev
+
+    # === EPS 與 成長率推算 ===
+    q1_yoy = ((est_q1_rev - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
+    ly_total_rev = (ly_q1_rev + ly_q2_rev + ly_q3_rev + ly_q4_rev)
+    est_annual_yoy = ((est_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
+
+    # 以「基礎季度的毛利體質」等比例放大至「預估季度/年度」
+    base_q_total_rev = base_q_avg_rev * 3 if base_q_avg_rev > 0 else 1.0
+    profit_margin_factor = base_q_eps * (1 - (non_op_ratio / 100)) / base_q_total_rev 
+
+    est_q1_eps_display = est_q1_rev * profit_margin_factor
+    est_full_year_eps = est_total_rev * profit_margin_factor
+    
+    # 保留畫面表格顯示用的動態單月均營收
+    if current_month <= 1: dynamic_base_avg, formula_note = base_11_12_avg, "推演1月(全未知)"
+    elif current_month == 2: dynamic_base_avg, formula_note = sim_rev_1 * 0.9 if sim_rev_1 > 0 else base_11_12_avg, "推演2月(知1月)"
     elif current_month == 3: dynamic_base_avg, formula_note = (sim_rev_1 * 2 + sim_rev_2) / 3 if sim_rev_2 > 0 else sim_rev_1, "推演3月(知1,2月)"
     else: dynamic_base_avg, formula_note = (sim_rev_1 + sim_rev_2 + sim_rev_3) / 3, "推演4月+"
 
-    est_q2_rev_total = dynamic_base_avg * 3
-    est_h1_rev_total = dynamic_base_avg * 3 + est_q2_rev_total
-    est_h1_eps = (base_q_eps * (1 - (non_op_ratio / 100)) * (dynamic_base_avg / base_q_avg_rev) if base_q_avg_rev > 0 else 0) * 2
-
-    avg_2yr_h1 = ((y1_q1_rev + y1_q2_rev) + (ly_q1_rev + ly_q2_rev)) / 2
-    avg_2yr_h2 = ((y1_q3_rev + y1_q4_rev) + (ly_q3_rev + ly_q4_rev)) / 2
-
-    if avg_2yr_h1 > 0:
-        multiplier = 1 + (avg_2yr_h2 / avg_2yr_h1)
-        est_total_rev, est_full_year_eps = est_h1_rev_total * multiplier, est_h1_eps * multiplier
-    else:
-        est_total_rev, est_full_year_eps = est_h1_rev_total, est_h1_eps
-
-    ly_total_rev = (ly_q1_rev + ly_q2_rev + ly_q3_rev + ly_q4_rev)
-    est_annual_yoy = ((est_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
-    
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio <= 0 else recent_payout_ratio)
     est_annual_dividend = est_full_year_eps * (calc_payout_ratio / 100)
@@ -139,7 +163,8 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
         "_ly_qs": [round(ly_q1_rev, 2), round(ly_q2_rev, 2), round(ly_q3_rev, 2), round(ly_q4_rev, 2)], 
         "_known_qs": [round(actual_known_q1, 2), 0, 0, 0],
         "_known_q1_months": [round(max(0, sim_rev_1), 2), round(max(0, sim_rev_2), 2), round(max(0, sim_rev_3), 2)],
-        "_total_est_qs": [round(static_q1_est_total, 2), round(est_q2_rev_total, 2), 0, 0]
+        # ✅ 直條圖補齊：將剛算出來的四季預估數值填入陣列
+        "_total_est_qs": [round(est_q1_rev, 2), round(est_q2_rev, 2), round(est_q3_rev, 2), round(est_q4_rev, 2)]
     }
 
 # ==========================================
@@ -181,7 +206,7 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
 # ==========================================
 # 🌟 核心快取大腦 
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (V182 強制突破版)...")
+@st.cache_data(ttl=3600, show_spinner="連線至雙核大數據庫 (V182 比例推演版)...")
 def fetch_gsheet_data_v182():
     try:
         client = get_gspread_client()
@@ -625,7 +650,6 @@ if cached_data:
             
             if st.button("📡 全市場掃描", type="primary"):
                 with st.spinner("掃描中..."):
-                    # ✅ V182 新增：自動過濾營建、金融、證券類股防線
                     exclude_codes = {
                         '1316', '1436', '1438', '1439', '1442', '1453', '1456', '1472', '1805', '1808', '2442', '2501', '2504', '2505', '2506', '2509', '2511', '2515', '2516', '2520', '2524', '2527', '2528', '2530', '2534', '2535', '2536', '2537', '2538', '2539', '2540', '2542', '2543', '2545', '2546', '2547', '2548', '2596', '2597', '2718', '2923', '3052', '3056', '3188', '3266', '3489', '3512', '3521', '3703', '4113', '4416', '4907', '5206', '5213', '5324', '5455', '5508', '5511', '5512', '5514', '5515', '5516', '5519', '5520', '5521', '5522', '5523', '5525', '5529', '5531', '5533', '5534', '5543', '5546', '5547', '5548', '6171', '6177', '6186', '6198', '6212', '6219', '6264', '8080', '8424', '9906', '9946',
                         '2880', '2881', '2882', '2883', '2884', '2885', '2886', '2887', '2889', '2890', '2891', '2892', '5880', '2816', '2832', '2850', '2851', '2852', '2867', '5878', '2801', '2812', '2820', '2834', '2836', '2838', '2845', '2849', '2897', '5876',
@@ -635,7 +659,6 @@ if cached_data:
                     kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
                     res_list = []
                     for code, d in db_gen.items():
-                        # 若代碼在排除清單中，直接跳過不掃描
                         if code in exclude_codes: continue
                         if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
                         
@@ -662,5 +685,3 @@ if cached_data:
                 res_list = [financial_strategic_model(d["name"], c.strip(), simulated_month, d, simulated_month) for c, d in db_fin.items() if d.get("pbr",0) > 0]
                 if not res_list: st.warning("無符合條件的金融股")
                 else: render_dataframe(pd.DataFrame(res_list).sort_values(by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], ascending=[True, False, False]), is_finance=True)
-
-# ✅ 程式碼完整結束
