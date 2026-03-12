@@ -1,3 +1,8 @@
+# ==========================================
+# 📂 檔案名稱： update_finance.py (後台自動更新機器人)
+# 💡 更新內容： 完美破解毛利率 0 值陷阱，精準計算累計毛利率與營益率
+# ==========================================
+
 import os
 import json
 import requests
@@ -13,8 +18,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ==========================================
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-# 設定要尋找的累計 EPS 欄位關鍵字
+# 設定要尋找的表單欄位關鍵字 (維持您原本的名稱，不影響 VBA)
 COL_NAME_CUM_EPS = "最新累季"          
+COL_NAME_CUM_GM  = "最新單季毛利率"     # 註：填入的會是官方算出的「累計數字」
+COL_NAME_CUM_OM  = "最新單季營益率"     # 註：填入的會是官方算出的「累計數字」
 
 # ==========================================
 # 🤖 智慧日期判讀系統
@@ -49,7 +56,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def fetch_and_update():
-    print(f"啟動財報更新機器人：鎖定抓取【{TARGET_YEAR_ROC}年 Q{TARGET_Q}】EPS 資料 (標題: {Q_STRING})...")
+    print(f"啟動財報更新機器人：鎖定抓取【{TARGET_YEAR_ROC}年 Q{TARGET_Q}】資料 (標題: {Q_STRING})...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
@@ -60,16 +67,33 @@ def fetch_and_update():
 
     curr_dict = {}
     
+    # 🌟 升級版智能數據萃取器 (防呆、防零、防干擾)
     def ext_val(item, kws, ex=None):
         if ex is None: ex = []
+        found_vals = {}
         for k, v in item.items():
             ck = str(k).replace(' ', '').replace('（', '(').replace('）', '')
+            # 如果欄位名稱符合關鍵字，且不包含排除字眼
             if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
                 v_str = str(v).strip()
                 if v_str and v_str not in ['None', '']:
+                    # 處理財報常見的負數括號，例如 (1,000) 變成 -1000
                     v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
-                    try: return float(v_str)
+                    try: 
+                        val = float(v_str)
+                        found_vals[ck] = val
                     except: pass
+        
+        # 從找到的數據中挑選最正確的
+        if found_vals:
+            # 優先挑選帶有「淨額」的數字 (官方最準確的最終數字)
+            for k, v in found_vals.items():
+                if '淨額' in k and v != 0:
+                    return v
+            # 如果沒有淨額，挑選最後一個不是 0 的數字
+            non_zeros = [v for v in found_vals.values() if v != 0]
+            if non_zeros: return non_zeros[-1]
+        
         return 0.0
 
     for item in (res_twse + res_tpex):
@@ -78,9 +102,20 @@ def fetch_and_update():
             continue
             
         eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
-        curr_dict[code] = {"eps_cumulative": eps_raw}
+        rev = ext_val(item, ['營業收入', '淨收益', '營業收益'])
+        
+        # 🌟 精準鎖定毛利與營益 (排除已實現/未實現的雜訊)
+        gp = ext_val(item, ['營業毛利', '毛損', '毛利'], ex=['未實現', '已實現'])
+        op = ext_val(item, ['營業利益', '營業損失', '營業損益', '營業淨利'])
+        
+        # 自動換算百分比
+        gm_percent = round((gp / rev) * 100, 2) if rev > 0 else 0.0
+        om_percent = round((op / rev) * 100, 2) if rev > 0 else 0.0
 
-    print(f"成功解析 {len(curr_dict)} 檔股票 EPS。準備寫入表單...")
+        if code in curr_dict and rev <= curr_dict[code]["rev"]: continue
+        curr_dict[code] = {"rev": rev, "gm": gm_percent, "om": om_percent, "eps_cumulative": eps_raw}
+
+    print(f"成功解析 {len(curr_dict)} 檔股票資料。準備寫入表單...")
 
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -95,6 +130,8 @@ def fetch_and_update():
         i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
         i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in str(x).replace(' ','')), -1)
         i_ae = next((i for i, x in enumerate(h) if COL_NAME_CUM_EPS in str(x).replace(' ','')), -1)
+        i_gm = next((i for i, x in enumerate(h) if COL_NAME_CUM_GM in str(x).replace(' ','') and "增" not in str(x)), -1)
+        i_om = next((i for i, x in enumerate(h) if COL_NAME_CUM_OM in str(x).replace(' ','') and "增" not in str(x)), -1)
         
         i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
         i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
@@ -119,18 +156,24 @@ def fetch_and_update():
                     elif TARGET_Q == 3: single_q_eps -= (get_v(i_q1) + get_v(i_q2))
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
-                    # 寫入單季 EPS
+                    # 1. 寫入單季 EPS
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
                     
-                    # 寫入最新累季 EPS
+                    # 2. 寫入最新累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
 
+                    # 3. 寫入毛利率與營益率
+                    if i_gm != -1 and curr["gm"] != 0:
+                        cells_to_update.append(gspread.Cell(row=r+1, col=i_gm+1, value=curr["gm"]))
+                    if i_om != -1 and curr["om"] != 0:
+                        cells_to_update.append(gspread.Cell(row=r+1, col=i_om+1, value=curr["om"]))
+            
             if cells_to_update:
                 ws.update_cells(cells_to_update)
                 update_count += len(cells_to_update)
 
-    print(f"🎉 EPS 專屬任務完成！共更新 {update_count} 個儲存格。")
+    print(f"🎉 任務完成！共更新 {update_count} 個儲存格。")
 
 if __name__ == "__main__":
     fetch_and_update()
