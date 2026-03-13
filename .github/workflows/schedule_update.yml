@@ -1,29 +1,31 @@
-name: 財報自動更新排程
+name: 每日財報更新排程
 
 on:
   schedule:
-    # 台灣時間每天 08:00 (UTC 00:00) 與 15:00 (UTC 07:00) 自動執行
-    - cron: '0 0,7 * * *'
-  workflow_dispatch: 
+    # 每天台灣時間凌晨 1:00 執行 (UTC 17:00)
+    - cron: '0 17 * * *'
+  workflow_dispatch: # 允許手動觸發按鈕
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 下載程式碼
-        uses: actions/checkout@v3
+    - name: 下載程式碼
+      uses: actions/checkout@v3
 
-      - name: 設定 Python 環境
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+    - name: 設定 Python 環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: 安裝所需套件
-        run: |
-          pip install requests gspread google-auth urllib3
+    - name: 安裝所需套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests gspread google-auth pandas
 
-      - name: 執行資料更新程式
-        env:
-          GOOGLE_KEY_JSON: ${{ secrets.GOOGLE_KEY_JSON }}
-        run: python update_finance.py
+    - name: 執行資料更新程式
+      env:
+        # 🔑 這裡是最關鍵的一步：把存在 Secrets 的金鑰交給程式！
+        GOOGLE_KEY_JSON: ${{ secrets.GOOGLE_KEY_JSON }}
+      run: python update_finance.py
