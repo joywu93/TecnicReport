@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V182 數學反推終極版)
-# 💡 更新內容： 放棄不靠譜的業外欄位，改用「稅前淨利 - 營業利益」倒推，保證有值！
+# 📂 檔案名稱： update_finance.py (V182 財報全項目搜索版)
+# 💡 更新內容： 針對 API 欄位不固定問題，改用「全項目加總」抓取業外數據
 # ==========================================
 
 import os
@@ -34,50 +34,68 @@ def fetch_and_update():
         print(f"抓取失敗: {e}"); return
 
     curr_dict = {}
-    
-    def ext_val(item, kws, ex=None):
-        if ex is None: ex = []
-        valid_vals = []
-        for k, v in item.items():
-            ck = str(k).replace(' ', '').replace('（', '(').replace('）', '')
-            if any(kw in ck for kw in kws) and not any(e in ck for e in ex):
-                v_str = str(v).strip()
-                if v_str and v_str not in ['None', '']:
-                    v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
-                    try: valid_vals.append(float(v_str))
-                    except: pass
-        if valid_vals:
-            # 優先取非零值，若都是零則回傳 0
-            nz = [v for v in valid_vals if v != 0]
-            return nz[0] if nz else 0.0
-        return 0.0
+
+    def parse_float(v):
+        if v is None: return 0.0
+        s = str(v).strip().replace(',', '')
+        if not s or s in ['None', '', '-']: return 0.0
+        if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
+        try: return float(s)
+        except: return 0.0
 
     for item in (res_twse + res_tpex):
         code = str(item.get('公司代號', '')).strip()
         if not code or str(item.get('年度', '')).strip() != TARGET_YEAR_ROC or str(item.get('季別', '')).strip() != str(TARGET_Q): 
             continue
             
-        eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
+        # 1. 抓取 EPS (基本每股盈餘)
+        eps_raw = 0.0
+        for k, v in item.items():
+            if '基本每股盈餘' in k or '每股盈餘' in k:
+                eps_raw = parse_float(v)
+                if eps_raw != 0: break
+
+        # 2. 抓取「稅前淨利」
+        pre_tax = 0.0
+        for k, v in item.items():
+            ck = k.replace(' ', '')
+            if ('稅前' in ck and '淨利' in ck) or ('稅前' in ck and '損益' in ck) or '繼續營業單位稅前' in ck:
+                if '所得稅' not in ck and '每股' not in ck:
+                    pre_tax = parse_float(v)
+                    if pre_tax != 0: break
+
+        # 3. 抓取「營業外損益」 (這是本案難點)
+        non_op = 0.0
+        # 先找直接欄位
+        for k, v in item.items():
+            ck = k.replace(' ', '')
+            if '營業外收入及支出' in ck or '營業外損益' in ck or '營業外收支' in ck:
+                non_op = parse_float(v)
+                if non_op != 0: break
         
-        # 🌟 改用數學反推法：業外 = 稅前 - 營業利益
-        op_profit = ext_val(item, ['營業利益'])
-        pre_tax = ext_val(item, ['稅前淨利', '稅前純益', '稅前損益', '繼續營業單位稅前'], ex=['所得稅', '稅後', '每股'])
-        
-        # 即使官方業外欄位是0，我們自己算
-        calc_non_op = pre_tax - op_profit
-        
+        # 如果還是 0，嘗試用「稅前淨利 - 營業利益」
+        if non_op == 0:
+            op_profit = 0.0
+            for k, v in item.items():
+                if '營業利益' in k.replace(' ', ''):
+                    op_profit = parse_float(v)
+                    if op_profit != 0: break
+            if pre_tax != 0 and op_profit != 0:
+                non_op = pre_tax - op_profit
+
         non_op_ratio = 0.0
         if pre_tax != 0:
-            non_op_ratio = round((calc_non_op / pre_tax) * 100, 2)
+            non_op_ratio = round((non_op / pre_tax) * 100, 2)
             
         curr_dict[code] = {
             "eps_cumulative": eps_raw,
             "non_op_ratio": non_op_ratio
         }
 
+    # 寫入邏輯
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+    target_sheets = [ws for ws in worksheets if any(n in ws.title for n in ["個股總表", "金融股"])]
     
     def ultra_clean(text):
         return str(text).replace('\n', '').replace('\r', '').replace(' ', '').replace('（', '(').replace('）', ')')
@@ -92,6 +110,7 @@ def fetch_and_update():
         i_ae = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in ultra_clean(x)), -1)
         i_nop = next((i for i, x in enumerate(h) if "最新單季業外損益" in ultra_clean(x)), -1)
         
+        # 尋找 Q1-Q3 欄位以便計算 Q4 單季
         i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in ultra_clean(x)), -1)
         i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in ultra_clean(x)), -1)
         i_q3 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q3單季每股盈餘" in ultra_clean(x)), -1)
@@ -103,23 +122,30 @@ def fetch_and_update():
                 code = str(row[i_c]).split('.')[0].strip()
                 if code in curr_dict:
                     curr = curr_dict[code]
+                    
+                    # 計算單季 EPS
                     single_q_eps = curr["eps_cumulative"]
                     def get_v(idx):
                         if idx == -1: return 0.0
                         v = str(row[idx]).replace(',', '').strip()
                         try: return float(v) if v and v != '-' else 0.0
                         except: return 0.0
-                    if TARGET_Q == 4: single_q_eps -= (get_v(i_q1) + get_v(i_q2) + get_v(i_q3))
+                    if TARGET_Q == 4:
+                        single_q_eps -= (get_v(i_q1) + get_v(i_q2) + get_v(i_q3))
                     
+                    # 準備批次更新
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
                     if i_nop != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_nop+1, value=curr["non_op_ratio"]))
+
             if cells_to_update:
                 ws.update_cells(cells_to_update)
                 update_count += len(cells_to_update)
-    print(f"🎉 更新成功！共填寫 {update_count} 格。")
+                print(f"   🚀 {ws.title} 更新完成")
+
+    print(f"\n🎉 任務圓滿完成！共更新 {update_count} 個儲存格。")
 
 if __name__ == "__main__":
     fetch_and_update()
