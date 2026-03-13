@@ -1,5 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V182 專注 EPS 無視換行終極版)
+# 📂 檔案名稱： update_finance.py (V182 專注 EPS & 業外佔比版)
+# 💡 更新內容： 完美無視換行、更新單季EPS、累計EPS、業外損益佔比
 # ==========================================
 
 import os
@@ -14,6 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
 # ==========================================
+# 🎯 設定目標：114年(2025) Q4
 TARGET_YEAR_ROC = "114"   
 TARGET_Q = 4              
 Q_STRING = "25Q4"         
@@ -55,16 +57,29 @@ def fetch_and_update():
         if not code or str(item.get('年度', '')).strip() != TARGET_YEAR_ROC or str(item.get('季別', '')).strip() != str(TARGET_Q): 
             continue
             
+        # 1. 抓取 EPS
         eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
-        curr_dict[code] = {"eps_cumulative": eps_raw}
+        
+        # 2. 抓取業外損益與稅前淨利，並計算佔比
+        non_op = ext_val(item, ['營業外收入及支出', '營業外損益'])
+        pre_tax = ext_val(item, ['稅前淨利', '稅前息前'])
+        
+        non_op_ratio = 0.0
+        if pre_tax != 0:
+            non_op_ratio = round((non_op / pre_tax) * 100, 2)
+            
+        curr_dict[code] = {
+            "eps_cumulative": eps_raw,
+            "non_op_ratio": non_op_ratio
+        }
 
-    print(f"✅ 解析完成。準備寫入表單...")
+    print(f"✅ 解析完成 ({len(curr_dict)}檔股票)。準備寫入表單...")
 
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
     
-    # 🌟 終極暴力清洗器：把所有換行(\n, \r)、空白全部殺光！
+    # 🌟 終極暴力清洗器：無情粉碎所有換行與空白
     def ultra_clean(text):
         if not text: return ""
         return str(text).replace('\n', '').replace('\r', '').replace(' ', '').replace('（', '(').replace('）', ')')
@@ -75,21 +90,26 @@ def fetch_and_update():
         if not data: continue
         h = data[0]
         
-        # 套用 ultra_clean 來找標題
+        # 鎖定表單上的三根柱子
         i_c = next((i for i, x in enumerate(h) if "代號" in ultra_clean(x)), -1)
         i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in ultra_clean(x)), -1)
-        i_ae = next((i for i, x in enumerate(h) if "最新累季" in ultra_clean(x)), -1)
+        i_ae = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in ultra_clean(x)), -1)
+        i_nop = next((i for i, x in enumerate(h) if "最新單季業外損益" in ultra_clean(x)), -1)
         
+        # 為了計算單季 EPS，尋找前幾季的欄位
         i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in ultra_clean(x)), -1)
         i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in ultra_clean(x)), -1)
         i_q3 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q3單季每股盈餘" in ultra_clean(x)), -1)
 
         print(f"\n🔍 檢查分頁: {ws.title}")
-        if i_e != -1: print(f"   ✅ 找到單季EPS欄位 (索引: {i_e})")
-        else: print(f"   ❌ 找不到單季EPS欄位")
+        if i_e != -1: print(f"   ✅ 找到【單季EPS】欄位")
+        else: print(f"   ❌ 找不到【單季EPS】欄位")
         
-        if i_ae != -1: print(f"   ✅ 找到累季EPS欄位 (索引: {i_ae})")
-        else: print(f"   ❌ 找不到累季EPS欄位")
+        if i_ae != -1: print(f"   ✅ 找到【累季EPS】欄位")
+        else: print(f"   ❌ 找不到【累季EPS】欄位")
+
+        if i_nop != -1: print(f"   ✅ 找到【業外佔比】欄位")
+        else: print(f"   ❌ 找不到【業外佔比】欄位")
 
         if i_c != -1 and i_e != -1:
             cells_to_update = []
@@ -99,6 +119,7 @@ def fetch_and_update():
                 if code in curr_dict:
                     curr = curr_dict[code]
                     
+                    # 計算單季 EPS 的數學邏輯
                     single_q_eps = curr["eps_cumulative"]
                     def get_v(idx):
                         if idx == -1: return 0.0
@@ -110,9 +131,16 @@ def fetch_and_update():
                     elif TARGET_Q == 3: single_q_eps -= (get_v(i_q1) + get_v(i_q2))
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
+                    # 1️⃣ 寫入：單季 EPS
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
+                    
+                    # 2️⃣ 寫入：最新累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
+                        
+                    # 3️⃣ 寫入：業外損益佔比
+                    if i_nop != -1:
+                        cells_to_update.append(gspread.Cell(row=r+1, col=i_nop+1, value=curr["non_op_ratio"]))
 
             if cells_to_update:
                 ws.update_cells(cells_to_update)
