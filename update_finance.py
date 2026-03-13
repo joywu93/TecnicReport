@@ -1,6 +1,5 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (後台自動更新機器人 - 專注EPS精準版)
-# 💡 更新內容： 移除毛利率干擾、改回手動指定年份(解決雲端時差問題)
+# 📂 檔案名稱： update_finance.py (V182 專注 EPS 完美純淨版)
 # ==========================================
 
 import os
@@ -12,20 +11,14 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ==========================================
-# ⚙️ 晚輩接手必看：自訂設定區
-# ==========================================
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-# 1. 請在此設定您要抓取哪一季的財報！(重要：手動設定最安全，不怕雲端時差)
-TARGET_YEAR_ROC = "113"   # 填入民國年 (如 113)
-TARGET_Q = 4              # 填入季別 (1, 2, 3, 4)
-Q_STRING = "24Q4"         # 填入您表單上的欄位前綴 (如 24Q4)
-
-# 2. 表單欄位名稱辨識設定
-COL_NAME_CUM_EPS = "最新累季"          # 對應：最新累季每股盈餘(元)
-
-# (註：官方 API 未提供毛利，故本程式將專注於自動化計算並填寫最準確的 EPS，毛利率請維持手動更新)
+# ==========================================
+# 直接鎖定年份與標題，不讓系統亂算
+TARGET_YEAR_ROC = "114"   
+TARGET_Q = 4              
+Q_STRING = "25Q4"         
+COL_NAME_CUM_EPS = "最新累季" 
 # ==========================================
 
 def get_gspread_client():
@@ -36,7 +29,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def fetch_and_update():
-    print(f"啟動財報更新機器人：鎖定抓取【{TARGET_YEAR_ROC}年 Q{TARGET_Q}】EPS 資料 (標題: {Q_STRING})...")
+    print(f"啟動財報更新機器人：鎖定抓取【{TARGET_YEAR_ROC}年 Q{TARGET_Q}】資料...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
@@ -67,7 +60,7 @@ def fetch_and_update():
         eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
         curr_dict[code] = {"eps_cumulative": eps_raw}
 
-    print(f"成功解析 {len(curr_dict)} 檔股票 EPS。準備寫入表單...")
+    print(f"✅ 解析完成。準備寫入表單...")
 
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
@@ -86,6 +79,13 @@ def fetch_and_update():
         i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
         i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
         i_q3 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q3單季每股盈餘" in str(x).replace(' ','')), -1)
+
+        print(f"\n🔍 檢查分頁: {ws.title}")
+        if i_e != -1: print(f"   ✅ 找到單季EPS欄位")
+        else: print(f"   ❌ 找不到單季EPS欄位")
+        
+        if i_ae != -1: print(f"   ✅ 找到累季EPS欄位")
+        else: print(f"   ❌ 找不到累季EPS欄位")
 
         if i_c != -1 and i_e != -1:
             cells_to_update = []
@@ -106,18 +106,16 @@ def fetch_and_update():
                     elif TARGET_Q == 3: single_q_eps -= (get_v(i_q1) + get_v(i_q2))
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
-                    # 寫入單季 EPS
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
-                    
-                    # 寫入最新累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
 
             if cells_to_update:
                 ws.update_cells(cells_to_update)
                 update_count += len(cells_to_update)
+                print(f"   🚀 成功寫入表單！")
 
-    print(f"🎉 EPS 專屬任務完成！共更新 {update_count} 個儲存格。")
+    print(f"\n🎉 任務完成！共更新 {update_count} 個儲存格。")
 
 if __name__ == "__main__":
     fetch_and_update()
