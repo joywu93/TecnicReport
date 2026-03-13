@@ -1,6 +1,6 @@
 # ==========================================
 # 📂 檔案名稱： update_finance.py (V182 舊版專注 EPS 更新機器人)
-# 💡 更新內容： 加入「欄位尋找診斷報告」，精準揪出不更新的原因
+# 💡 更新內容： 修正民國年對應 (114年=25Q4)、強化表單標題的換行與空白過濾機制
 # ==========================================
 
 import os
@@ -15,11 +15,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
 # ==========================================
-# ⚠️ 關鍵設定區：請確認這裡的 Q_STRING 是否與您表單的標題「完全一致」！
-TARGET_YEAR_ROC = "113"   # 政府資料年度 (113年年報)
-TARGET_Q = 4              # 政府資料季別
-Q_STRING = "25Q4"         # 👈 尋找您表單上的標題前綴 (如表單是 25Q4單季每股盈餘，就填 25Q4)
-COL_NAME_CUM_EPS = "最新累季" # 尋找最新累季的標題關鍵字
+# ⚠️ 關鍵設定區：已為您完全對齊 2025 年的數據
+TARGET_YEAR_ROC = "114"   # 2025 年 = 民國 114 年 (非常重要！)
+TARGET_Q = 4              
+Q_STRING = "25Q4"         
+COL_NAME_CUM_EPS = "最新累季每股盈餘(元)" # 您提供的精準標題
 # ==========================================
 
 def get_gspread_client():
@@ -67,31 +67,32 @@ def fetch_and_update():
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
     
+    # 🌟 防彈級的標題清洗功能 (去除所有空白、換行、全形括號)
+    def clean_h(val):
+        return str(val).replace('\n', '').replace('\r', '').replace(' ', '').replace('（', '(').replace('）', ')')
+    
+    clean_target_eps = clean_h(COL_NAME_CUM_EPS)
+    
     update_count = 0
     for ws in target_sheets:
         data = ws.get_all_values()
         if not data: continue
         h = data[0]
         
-        i_c = next((i for i, x in enumerate(h) if "代號" in str(x)), -1)
-        i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in str(x).replace(' ','')), -1)
-        i_ae = next((i for i, x in enumerate(h) if COL_NAME_CUM_EPS in str(x).replace(' ','')), -1)
+        i_c = next((i for i, x in enumerate(h) if "代號" in clean_h(x)), -1)
+        i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in clean_h(x)), -1)
+        i_ae = next((i for i, x in enumerate(h) if clean_target_eps in clean_h(x)), -1)
         
-        i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in str(x).replace(' ','')), -1)
-        i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in str(x).replace(' ','')), -1)
-        i_q3 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q3單季每股盈餘" in str(x).replace(' ','')), -1)
+        i_q1 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q1單季每股盈餘" in clean_h(x)), -1)
+        i_q2 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q2單季每股盈餘" in clean_h(x)), -1)
+        i_q3 = next((i for i, x in enumerate(h) if f"{Q_STRING[:2]}Q3單季每股盈餘" in clean_h(x)), -1)
 
-        # 🌟 診斷系統：回報尋找欄位的結果
         print(f"\n🔍 正在檢查分頁: {ws.title}")
-        if i_e == -1:
-            print(f"   ❌ 找不到目標：'{Q_STRING}單季每股盈餘' (請檢查表單標題是否有空白或打錯字)")
-        else:
-            print(f"   ✅ 找到目標單季EPS欄位！")
+        if i_e == -1: print(f"   ❌ 找不到目標：'{Q_STRING}單季每股盈餘' (表單上的標題可能是: {[clean_h(x) for x in h if Q_STRING in clean_h(x)]})")
+        else: print(f"   ✅ 成功鎖定目標：單季EPS欄位 (索引 {i_e})")
             
-        if i_ae == -1:
-            print(f"   ❌ 找不到目標：包含 '{COL_NAME_CUM_EPS}' 的欄位")
-        else:
-            print(f"   ✅ 找到最新累季EPS欄位！")
+        if i_ae == -1: print(f"   ❌ 找不到目標：包含 '{COL_NAME_CUM_EPS}' 的欄位")
+        else: print(f"   ✅ 成功鎖定目標：最新累季EPS欄位 (索引 {i_ae})")
 
         if i_c != -1 and i_e != -1:
             cells_to_update = []
@@ -112,17 +113,14 @@ def fetch_and_update():
                     elif TARGET_Q == 3: single_q_eps -= (get_v(i_q1) + get_v(i_q2))
                     elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
 
-                    # 寫入單季 EPS
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
-                    
-                    # 寫入最新累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
 
             if cells_to_update:
                 ws.update_cells(cells_to_update)
                 update_count += len(cells_to_update)
-                print(f"   🚀 寫入 {len(cells_to_update)} 個儲存格。")
+                print(f"   🚀 成功將 {len(cells_to_update)} 筆資料寫入表單！")
 
     print(f"\n🎉 任務完成！共更新 {update_count} 個儲存格。")
 
