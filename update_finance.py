@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V182 業外佔比無敵解析版)
-# 💡 更新內容： 新增「零值過濾器」，保證絕對抓到真實的非零業外損益！
+# 📂 檔案名稱： update_finance.py (V182 數學反推終極版)
+# 💡 更新內容： 放棄不靠譜的業外欄位，改用「稅前淨利 - 營業利益」倒推，保證有值！
 # ==========================================
 
 import os
@@ -13,7 +13,6 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
-
 TARGET_YEAR_ROC = "114"   
 TARGET_Q = 4              
 Q_STRING = "25Q4"         
@@ -32,8 +31,7 @@ def fetch_and_update():
         res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
         res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False, timeout=15).json()
     except Exception as e:
-        print(f"抓取失敗: {e}")
-        return
+        print(f"抓取失敗: {e}"); return
 
     curr_dict = {}
     
@@ -46,15 +44,12 @@ def fetch_and_update():
                 v_str = str(v).strip()
                 if v_str and v_str not in ['None', '']:
                     v_str = '-' + v_str[1:-1].replace(',', '') if v_str.startswith('(') else v_str.replace(',', '')
-                    try: 
-                        valid_vals.append(float(v_str))
+                    try: valid_vals.append(float(v_str))
                     except: pass
-        
         if valid_vals:
-            # 🌟 核心防呆機制：過濾掉 0，只取有真實數字的欄位
-            non_zeros = [v for v in valid_vals if v != 0]
-            if non_zeros: return non_zeros[0]
-            return 0.0 # 如果找遍了全部都是 0，才回傳 0
+            # 優先取非零值，若都是零則回傳 0
+            nz = [v for v in valid_vals if v != 0]
+            return nz[0] if nz else 0.0
         return 0.0
 
     for item in (res_twse + res_tpex):
@@ -63,45 +58,35 @@ def fetch_and_update():
             continue
             
         eps_raw = ext_val(item, ['基本每股盈餘', '每股盈餘'])
-        # 嚴格鎖定字眼，排除干擾
-        non_op = ext_val(item, ['營業外收入及支出', '營業外損益', '營業外收支'])
-        pre_tax = ext_val(item, ['稅前淨利', '稅前息前', '稅前純益', '稅前損益', '繼續營業單位稅前'], ex=['所得稅', '稅後', '遞延', '停業', '每股', '綜合'])
+        
+        # 🌟 改用數學反推法：業外 = 稅前 - 營業利益
+        op_profit = ext_val(item, ['營業利益'])
+        pre_tax = ext_val(item, ['稅前淨利', '稅前純益', '稅前損益', '繼續營業單位稅前'], ex=['所得稅', '稅後', '每股'])
+        
+        # 即使官方業外欄位是0，我們自己算
+        calc_non_op = pre_tax - op_profit
         
         non_op_ratio = 0.0
         if pre_tax != 0:
-            non_op_ratio = round((non_op / pre_tax) * 100, 2)
+            non_op_ratio = round((calc_non_op / pre_tax) * 100, 2)
             
-        # 🌟 專屬監視器：紀錄特定股票的解析狀況
-        if code in ['3023', '2330']:
-            print(f"\n--- {code} 分析報告 ---")
-            print(f"業外: {non_op}, 稅前: {pre_tax} -> 佔比: {non_op_ratio}%")
-            if non_op_ratio == 0:
-                print(f"【⚠️ 發現零值，印出原始資料供排查】")
-                for k, v in item.items():
-                    if any(x in k for x in ['外', '稅前', '損益', '利益']):
-                        print(f"  - {k}: {v}")
-
         curr_dict[code] = {
             "eps_cumulative": eps_raw,
             "non_op_ratio": non_op_ratio
         }
-
-    print(f"\n✅ 解析完成 ({len(curr_dict)}檔股票)。準備寫入表單...")
 
     client = get_gspread_client()
     worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
     target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
     
     def ultra_clean(text):
-        if not text: return ""
-        return str(text).replace('\n', '').replace('\r', '').replace(' ', '').replace('（', '(').replace('）', '')
+        return str(text).replace('\n', '').replace('\r', '').replace(' ', '').replace('（', '(').replace('）', ')')
     
     update_count = 0
     for ws in target_sheets:
         data = ws.get_all_values()
         if not data: continue
         h = data[0]
-        
         i_c = next((i for i, x in enumerate(h) if "代號" in ultra_clean(x)), -1)
         i_e = next((i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in ultra_clean(x)), -1)
         i_ae = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in ultra_clean(x)), -1)
@@ -118,32 +103,23 @@ def fetch_and_update():
                 code = str(row[i_c]).split('.')[0].strip()
                 if code in curr_dict:
                     curr = curr_dict[code]
-                    
                     single_q_eps = curr["eps_cumulative"]
                     def get_v(idx):
                         if idx == -1: return 0.0
                         v = str(row[idx]).replace(',', '').strip()
                         try: return float(v) if v and v != '-' else 0.0
                         except: return 0.0
-                        
                     if TARGET_Q == 4: single_q_eps -= (get_v(i_q1) + get_v(i_q2) + get_v(i_q3))
-                    elif TARGET_Q == 3: single_q_eps -= (get_v(i_q1) + get_v(i_q2))
-                    elif TARGET_Q == 2: single_q_eps -= get_v(i_q1)
-
-                    # 1. 寫入單季 EPS
+                    
                     cells_to_update.append(gspread.Cell(row=r+1, col=i_e+1, value=round(single_q_eps, 2)))
-                    # 2. 寫入累季 EPS
                     if i_ae != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_ae+1, value=round(curr["eps_cumulative"], 2)))
-                    # 3. 寫入業外佔比
                     if i_nop != -1:
                         cells_to_update.append(gspread.Cell(row=r+1, col=i_nop+1, value=curr["non_op_ratio"]))
-
             if cells_to_update:
                 ws.update_cells(cells_to_update)
                 update_count += len(cells_to_update)
-
-    print(f"\n🎉 任務完成！共更新 {update_count} 個儲存格。")
+    print(f"🎉 更新成功！共填寫 {update_count} 格。")
 
 if __name__ == "__main__":
     fetch_and_update()
