@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (AO 數據展示研究版)
-# 💡 目的： 將 API 所有原始欄位填入 AO 之後，找出為什麼金額是 0
+# 📂 檔案名稱： update_finance.py (V186 防空值更新版)
+# 💡 策略： 只有當 API 提供非 0 的利潤數據時，才更新業外佔比，避免被 0 覆蓋
 # ==========================================
 
 import os
@@ -29,31 +29,23 @@ def force_float(v):
 
 def fetch_and_update():
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 同時抓取兩個 API 來源進行比對
-    print("📡 正在擷取 API 原始數據...")
-    res_brief = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False).json()
-    res_detail = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap11_L", headers=headers, verify=False).json()
+    # 擷取正式損益表
+    try:
+        res_detail = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap11_L", headers=headers, verify=False, timeout=30).json()
+        res_detail_o = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap11_O", headers=headers, verify=False, timeout=30).json()
+        all_detail = res_detail + res_detail_o
+    except: return
 
-    # 彙整數據字典
-    raw_data_map = {}
-    
-    # 掃描簡表 (Brief)
-    for item in res_brief:
+    stats = {}
+    for item in all_detail:
         if str(item.get('年度')) == "114" and str(item.get('季別')) == "4":
             code = str(item.get('公司代號')).strip()
-            raw_data_map[code] = {
-                "brief_eps": force_float(item.get('基本每股盈餘(元)')),
-                "brief_op": force_float(item.get('營業利益')),
-                "detail_op": 0.0,
-                "detail_pretax": 0.0
-            }
-
-    # 掃描正式損益表 (Detail)
-    for item in res_detail:
-        code = str(item.get('公司代號')).strip()
-        if code in raw_data_map and str(item.get('年度')) == "114" and str(item.get('季別')) == "4":
-            raw_data_map[code]["detail_op"] = force_float(item.get('營業利益（損失）'))
-            raw_data_map[code]["detail_pretax"] = force_float(item.get('繼續營業單位稅前淨利（淨損）'))
+            op = force_float(item.get('營業利益（損失）'))
+            pre_t = force_float(item.get('繼續營業單位稅前淨利（淨損）'))
+            eps = force_float(item.get('基本每股盈餘（元）'))
+            
+            # 🌟 只有當數據不是 0 時才記錄
+            stats[code] = {"eps": eps, "op": op, "pre_t": pre_t}
 
     client = get_gspread_client()
     spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
@@ -63,21 +55,27 @@ def fetch_and_update():
         data = ws.get_all_values()
         h = data[0]
         i_c = next(i for i, x in enumerate(h) if "代號" in x)
+        i_nop = next(i for i, x in enumerate(h) if "業外" in x and "%" in x)
         
         cells = []
         for r_idx, row in enumerate(data[1:], start=2):
             code = row[i_c].split('.')[0].strip()
-            if code in raw_data_map:
-                d = raw_data_map[code]
-                # 填入 AO(41) 之後的欄位
-                cells.append(gspread.Cell(row=r_idx, col=41, value=d["brief_eps"]))     # AO: 簡表EPS
-                cells.append(gspread.Cell(row=r_idx, col=42, value=d["brief_op"]))      # AP: 簡表營業利益
-                cells.append(gspread.Cell(row=r_idx, col=43, value=d["detail_op"]))     # AQ: 正式表營業利益
-                cells.append(gspread.Cell(row=r_idx, col=44, value=d["detail_pretax"])) # AR: 正式表稅前淨利
+            if code in stats:
+                d = stats[code]
+                
+                # 🌟 關鍵邏輯：如果 API 抓到的是 0，就不更新這一格，保留原本的數據
+                if d["pre_t"] != 0:
+                    non_op_ratio = round(((d["pre_t"] - d["op"]) / d["pre_t"]) * 100, 2)
+                    cells.append(gspread.Cell(row=r_idx, col=i_nop+1, value=non_op_ratio))
+                
+                # 同步更新 AO-AR 證據欄，方便我們觀察 API 什麼時候「活過來」
+                cells.append(gspread.Cell(row=r_idx, col=41, value=d["eps"]))
+                cells.append(gspread.Cell(row=r_idx, col=42, value=d["op"]))
+                cells.append(gspread.Cell(row=r_idx, col=43, value=d["pre_t"]))
         
         if cells:
             ws.update_cells(cells, value_input_option='USER_ENTERED')
-            print(f"✅ {ws.title} 原始數據展示完成 (AO-AR欄)")
+            print(f"📊 {ws.title} 掃描更新完成。")
 
 if __name__ == "__main__":
     fetch_and_update()
