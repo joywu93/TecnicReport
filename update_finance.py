@@ -16,6 +16,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def fetch_and_update():
+    print("📡 正在全面掃描 API 欄位結構...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False).json()
     res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False).json()
@@ -24,20 +25,30 @@ def fetch_and_update():
     curr_dict = {}
     for item in all_data:
         code = str(item.get('公司代號', '')).strip()
-        # 🌟 關鍵偵測：把 3023 的所有原始欄位印出來
-        if code == '3023' and str(item.get('年度')) == "114":
-            print(f"🕵️ 發現 3023 原始 JSON 結構：")
-            print(json.dumps(item, indent=2, ensure_ascii=False))
+        
+        # 🌟 核心突破：如果抓到 3023，把「所有」欄位名稱印出來看
+        if code == '3023':
+            print(f"👀 [3023 欄位大公開] 年度: {item.get('年度')}, 季別: {item.get('季別')}")
+            # 這裡會印出這條資料所有的 Key，我們就能看到「營業利益」到底叫什麼名字
+            print(f"原始欄位清單: {list(item.keys())}")
             
-            # 暫時只抓 EPS 確保能寫入
+            # 嘗試抓取所有可能的數值
             eps = 0.0
+            op_p = 0.0
+            pre_t = 0.0
             for k, v in item.items():
-                if '基本每股盈餘' in k: 
-                    try: eps = float(str(v).replace(',', ''))
-                    except: pass
-            curr_dict[code] = {"eps": eps}
+                val = str(v).replace(',', '')
+                try:
+                    f_val = float(val)
+                    if '基本每股盈餘' in k: eps = f_val
+                    if '營業利益' in k and '每股' not in k: op_p = f_val
+                    if '稅前' in k and '所得稅' not in k: pre_t = f_val
+                except: continue
+            
+            curr_dict[code] = {"eps": eps, "op_p": op_p, "pre_t": pre_t, "q": item.get('季別')}
+            print(f"🔍 抓取結果 -> EPS: {eps}, 營業利益: {op_p}, 稅前淨利: {pre_t}")
 
-    # 寫入 AO 欄位
+    # 更新到 AO 之後的欄位
     client = get_gspread_client()
     ws_list = client.open_by_url(MASTER_GSHEET_URL).worksheets()
     for ws in ws_list:
@@ -48,10 +59,15 @@ def fetch_and_update():
         for r_idx, row in enumerate(data[1:], start=2):
             c_code = row[i_c].split('.')[0].strip()
             if c_code in curr_dict:
-                cells.append(gspread.Cell(row=r_idx, col=41, value=curr_dict[c_code]["eps"]))
+                d = curr_dict[c_code]
+                # 填入 AO-AR 欄位作為證據
+                cells.append(gspread.Cell(row=r_idx, col=41, value=d["eps"]))
+                cells.append(gspread.Cell(row=r_idx, col=42, value=d["op_p"]))
+                cells.append(gspread.Cell(row=r_idx, col=43, value=d["pre_t"]))
+                cells.append(gspread.Cell(row=r_idx, col=44, value=f"Q{d['q']}"))
         if cells:
             ws.update_cells(cells, value_input_option='USER_ENTERED')
-            print(f"✅ {ws.title} EPS 原始值填入 AO 成功")
+            print(f"✅ {ws.title} 證據欄位更新完成")
 
 if __name__ == "__main__":
     fetch_and_update()
