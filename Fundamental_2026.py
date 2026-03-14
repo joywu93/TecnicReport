@@ -561,7 +561,7 @@ if cached_data:
                                 
                                 st.markdown(
                                     f"**股價 {safe_price:.2f}元** ｜ "
-                                    f"殖利率 **{safe_yield:.2f}%**<br>"
+                                    f"前瞻殖利率 **{safe_yield:.2f}%**<br>"
                                     f"PER **{safe_per:.2f}** ｜ "
                                     f"EPS **{safe_eps:.2f}元** ｜ "
                                     f"成長率 **{safe_grow:.2f}%** ｜ "
