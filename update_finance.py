@@ -1,10 +1,9 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V182 欄位對位修正版)
-# 💡 更新核心： 1. 精準比對長欄位名稱 2. 強制反推業外算法
+# 📂 檔案名稱： update_finance.py (V182 終極除錯版)
+# 💡 修改重點： 強化營業利益與稅前淨利的比對邏輯，確保相減不為 0
 # ==========================================
 
 import os
-import datetime
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
@@ -13,13 +12,10 @@ import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 設定區 ---
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
-
-# 設定目標：114年 Q4 (即將收尾的數據)
 TARGET_YEAR_ROC = "114"   
 TARGET_Q = 4              
-Q_STRING = "25Q4" # 您的 Sheet 應該是用 25Q4 代表 2025Q4 (民國114Q4)
+Q_STRING = "25Q4" 
 
 def get_gspread_client():
     key_data = os.environ.get("GOOGLE_KEY_JSON")
@@ -36,42 +32,50 @@ def parse_val(v):
     except: return 0.0
 
 def fetch_and_update():
-    print(f"🚀 啟動更新：抓取 {TARGET_YEAR_ROC}Q{TARGET_Q} 數據...")
     headers = {'User-Agent': 'Mozilla/5.0'}
-    
-    # 1. 抓取 API
     try:
         res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False, timeout=15).json()
         res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", headers=headers, verify=False, timeout=15).json()
     except Exception as e:
-        print(f"❌ API 連線失敗: {e}"); return
+        print(f"❌ API 失敗: {e}"); return
 
-    # 2. 數據封裝 (反推業外邏輯)
     curr_dict = {}
     for item in (res_twse + res_tpex):
         code = str(item.get('公司代號', '')).strip()
         if not code or str(item.get('年度', '')).strip() != TARGET_YEAR_ROC or str(item.get('季別', '')).strip() != str(TARGET_Q): 
             continue
         
+        # 1. 抓 EPS
         eps = parse_val(item.get('基本每股盈餘(元)')) or parse_val(item.get('基本每股盈餘'))
-        op_profit = parse_val(item.get('營業利益（損失）')) or parse_val(item.get('營業利益'))
         
-        pre_tax = 0.0
-        for k in ['繼續營業單位稅前淨利（淨損）', '稅前淨利（淨損）', '稅前淨利']:
-            v = parse_val(item.get(k))
-            if v != 0:
-                pre_tax = v
+        # 2. 抓 營業利益 (加強匹配)
+        op_profit = 0.0
+        for k, v in item.items():
+            if '營業利益' in k and '每股' not in k:
+                op_profit = parse_val(v)
                 break
         
-        # 強制反推佔比
+        # 3. 抓 稅前淨利 (加強匹配)
+        pre_tax = 0.0
+        for k, v in item.items():
+            if ('稅前' in k and '淨利' in k) or ('稅前' in k and '損益' in k) or '繼續營業單位稅前' in k:
+                if '所得稅' not in k and '每股' not in k:
+                    pre_tax = parse_val(v)
+                    if pre_tax != 0: break
+        
+        # 4. 計算業外佔比
         non_op_ratio = 0.0
         if pre_tax != 0:
+            # 即使 op_profit 是 0 (例如金融業)，也會正確反應 pre_tax 的 100%
             calc_non_op = pre_tax - op_profit
             non_op_ratio = round((calc_non_op / pre_tax) * 100, 2)
+        
+        # 偵錯打印 (僅 3023)
+        if code == '3023':
+            print(f"DEBUG 3023: 稅前={pre_tax}, 營業利益={op_profit}, 業外佔比={non_op_ratio}")
             
         curr_dict[code] = {"eps": eps, "non_op": non_op_ratio}
 
-    # 3. 精準寫入 Sheet
     client = get_gspread_client()
     spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
     
@@ -81,35 +85,23 @@ def fetch_and_update():
         if not data: continue
         h = data[0]
         
-        # 欄位定位修正
         try:
             i_c = next(i for i, x in enumerate(h) if "代號" in x)
             i_e = next(i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in x.replace(' ', ''))
             i_ae = next(i for i, x in enumerate(h) if "最新累季每股盈餘" in x.replace(' ', ''))
+            # 抓取「佔稅前淨利(%)」關鍵字
+            i_nop = next(i for i, x in enumerate(h) if "業外" in x and "%" in x)
             
-            # 🌟 這裡修正為您 Sheet 上的長名稱：最新單季業外損益佔稅前淨利(%)
-            i_nop = next(i for i, x in enumerate(h) if "最新單季業外損益佔稅前淨利(%)" in x.replace(' ', ''))
-            
-            # 定位 Q1-Q3
-            i_q1 = next((i for i, x in enumerate(h) if "25Q1單季每股盈餘" in x.replace(' ', '')), -1)
-            i_q2 = next((i for i, x in enumerate(h) if "25Q2單季每股盈餘" in x.replace(' ', '')), -1)
-            i_q3 = next((i for i, x in enumerate(h) if "25Q3單季每股盈餘" in x.replace(' ', '')), -1)
-        except Exception as e:
-            print(f"⚠️ {ws.title} 欄位定位失敗: {e}"); continue
+            i_qs = [next((i for i, x in enumerate(h) if f"25Q{q}單季每股盈餘" in x.replace(' ', '')), -1) for q in [1,2,3]]
+        except: continue
 
         cells = []
         for r_idx, row in enumerate(data[1:], start=2):
             code = row[i_c].split('.')[0].strip()
             if code in curr_dict:
                 info = curr_dict[code]
-                
-                # Q4 單季 EPS 計算
-                def get_v(idx):
-                    if idx == -1 or idx >= len(row): return 0.0
-                    try: return float(row[idx].replace(',', ''))
-                    except: return 0.0
-                
-                single_q_eps = info["eps"] - (get_v(i_q1) + get_v(i_q2) + get_v(i_q3))
+                q123 = sum(parse_val(row[idx]) for idx in i_qs if idx != -1)
+                single_q_eps = info["eps"] - q123 if TARGET_Q == 4 else info["eps"]
 
                 cells.append(gspread.Cell(row=r_idx, col=i_e+1, value=round(single_q_eps, 2)))
                 cells.append(gspread.Cell(row=r_idx, col=i_ae+1, value=round(info["eps"], 2)))
@@ -117,7 +109,7 @@ def fetch_and_update():
         
         if cells:
             ws.update_cells(cells)
-            print(f"✅ {ws.title} 更新成功")
+            print(f"✅ {ws.title} 更新完成")
 
 if __name__ == "__main__":
     fetch_and_update()
