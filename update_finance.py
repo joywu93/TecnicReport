@@ -1,3 +1,8 @@
+# ==========================================
+# 📂 檔案名稱： update_finance.py (V184 損益表全抓取版)
+# 💡 核心突破： 捨棄不穩定的簡表，改用正式損益表 API 抓取「營業利益」與「稅前淨利」
+# ==========================================
+
 import os
 import requests
 import gspread
@@ -26,27 +31,31 @@ def force_float(v):
 
 def fetch_and_update():
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 抓取簡表 (用來抓 EPS)
-    brief_data = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap14_L", headers=headers, verify=False).json()
-    # 抓取損益表 (用來抓 營業利益 與 稅前淨利)
-    detail_data = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap11_L", headers=headers, verify=False).json()
+    print(f"📡 正在從正式損益表 API 提取 {TARGET_YEAR}Q{TARGET_Q} 數據...")
     
-    # 建立數據字典
-    stats = {}
-    
-    # 1. 先從簡表拿 EPS
-    for item in brief_data:
-        if str(item.get('年度')) == TARGET_YEAR and str(item.get('季別')) == TARGET_Q:
-            code = str(item.get('公司代號')).strip()
-            stats[code] = {"eps": force_float(item.get('基本每股盈餘(元)')), "op": 0.0, "pre_tax": 0.0}
+    # 🌟 改抓 t187ap11_L (綜合損益表) - 這是目前最完整的路徑
+    try:
+        res_twse = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap11_L", headers=headers, verify=False, timeout=20).json()
+        res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap11_O", headers=headers, verify=False, timeout=20).json()
+        all_data = res_twse + res_tpex
+    except Exception as e:
+        print(f"❌ API 連線失敗: {e}"); return
 
-    # 2. 從細表拿準確的金額
-    for item in detail_data:
-        code = str(item.get('公司代號')).strip()
-        if code in stats and str(item.get('年度')) == TARGET_YEAR and str(item.get('季別')) == TARGET_Q:
-            # 損益表的欄位更精準
-            stats[code]["op"] = force_float(item.get('營業利益（損失）'))
-            stats[code]["pre_tax"] = force_float(item.get('繼續營業單位稅前淨利（淨損）'))
+    stats = {}
+    for item in all_data:
+        if str(item.get('年度')) == TARGET_YEAR and str(item.get('季別')) == TARGET_Q:
+            code = str(item.get('公司代號', '')).strip()
+            
+            # 從正式表抓取核心數值 (欄位名稱在正式表通常極度穩定)
+            eps = force_float(item.get('基本每股盈餘（元）')) or force_float(item.get('基本每股盈餘(元)'))
+            op_profit = force_float(item.get('營業利益（損失）'))
+            pre_tax = force_float(item.get('繼續營業單位稅前淨利（淨損）'))
+            
+            if eps != 0 or op_profit != 0:
+                stats[code] = {"eps": eps, "op": op_profit, "pre_tax": pre_tax}
+
+    if '3023' in stats:
+        print(f"✅ 成功抓取 3023: EPS={stats['3023']['eps']}, 營業利益={stats['3023']['op']}, 稅前={stats['3023']['pre_tax']}")
 
     client = get_gspread_client()
     spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
@@ -61,7 +70,7 @@ def fetch_and_update():
             i_q4_eps = next(i for i, x in enumerate(h) if "25Q4單季每股盈餘" in x.replace(' ', ''))
             i_non_op = next(i for i, x in enumerate(h) if "業外" in x and "%" in x)
             
-            # 定位 Q1-Q3 欄位以便扣除
+            # Q1-Q3 欄位索引
             i_q123 = [next((i for i, x in enumerate(h) if f"25Q{q}單季" in x), -1) for q in [1,2,3]]
 
             cells = []
@@ -70,26 +79,24 @@ def fetch_and_update():
                 if code in stats:
                     d = stats[code]
                     
-                    # 計算 Q4 單季 EPS
+                    # 計算 Q4 單季 EPS (累計 - Q1 - Q2 - Q3)
                     q123_val = sum(force_float(row[idx]) for idx in i_q123 if idx != -1)
                     q4_single_eps = d["eps"] - q123_val
                     
-                    # 計算業外佔比 (稅前 - 營業利益) / 稅前
+                    # 業外佔比反推
                     non_op_ratio = 0.0
                     if d["pre_tax"] != 0:
                         non_op_ratio = round(((d["pre_tax"] - d["op"]) / d["pre_tax"]) * 100, 2)
                     
-                    # 寫入正確欄位
                     cells.append(gspread.Cell(row=r_idx, col=i_q4_eps+1, value=round(q4_single_eps, 2)))
                     cells.append(gspread.Cell(row=r_idx, col=i_non_op+1, value=non_op_ratio))
-                    
-                    # 同時更新後面的證據欄位方便核對
-                    cells.append(gspread.Cell(row=r_idx, col=41, value=d["op"]))      # AO
-                    cells.append(gspread.Cell(row=r_idx, col=42, value=d["pre_tax"]))  # AP
+                    # AO, AP 原始數據供核對
+                    cells.append(gspread.Cell(row=r_idx, col=41, value=d["op"]))
+                    cells.append(gspread.Cell(row=r_idx, col=42, value=d["pre_tax"]))
             
             if cells:
                 ws.update_cells(cells, value_input_option='USER_ENTERED')
-                print(f"✅ {ws.title} 資料更新成功")
+                print(f"📊 {ws.title} 同步完成。")
         except: continue
 
 if __name__ == "__main__":
