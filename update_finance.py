@@ -1,3 +1,8 @@
+# ==========================================
+# 📂 檔案名稱： update_finance.py (原始數據展示版)
+# 💡 核心邏輯： 不做複雜計算，直接把 API 原始數值填入 AN 之後的欄位
+# ==========================================
+
 import os
 import requests
 import gspread
@@ -10,7 +15,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 TARGET_YEAR_ROC = "114"   
 TARGET_Q = 4              
-Q_STRING = "25Q4" 
 
 def get_gspread_client():
     key_data = os.environ.get("GOOGLE_KEY_JSON")
@@ -20,7 +24,7 @@ def get_gspread_client():
 
 def force_float(v):
     if v is None: return 0.0
-    s = str(v).strip().replace(',', '').replace('%', '')
+    s = str(v).strip().replace(',', '')
     if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
     try: return float(s)
     except: return 0.0
@@ -32,53 +36,47 @@ def fetch_and_update():
 
     curr_dict = {}
     for item in (res_twse + res_tpex):
-        code = item.get('公司代號', '').strip()
-        # 這裡放寬條件，看看是不是季別抓錯
-        if code in ['3023', '3030']:
-            print(f"🔍 偵測到目標股 {code}: 年度={item.get('年度')}, 季別={item.get('季別')}")
-        
+        code = str(item.get('公司代號', '')).strip()
         if str(item.get('年度')) == TARGET_YEAR_ROC and str(item.get('季別')) == str(TARGET_Q):
-            eps = force_float(item.get('基本每股盈餘(元)')) or force_float(item.get('基本每股盈餘'))
             
-            # 遍歷所有 Key 找數字，不猜名字了
-            op_p = 0.0
-            pre_t = 0.0
+            # 遍歷抓取三大原始數據
+            eps, op_p, pre_t = 0.0, 0.0, 0.0
             for k, v in item.items():
-                if '營業利益' in k and '每股' not in k: op_p = force_float(v)
-                if '稅前' in k and '淨利' in k and '所得稅' not in k: pre_t = force_float(v)
+                k_c = k.replace(' ', '')
+                if '基本每股盈餘' in k_c and '元' in k_c: eps = force_float(v)
+                if '營業利益' in k_c and '每股' not in k_c: op_p = force_float(v)
+                if '稅前' in k_c and ('淨利' in k_c or '損益' in k_c) and '所得稅' not in k_c: pre_t = force_float(v)
             
-            non_op = 0.0
-            if pre_t != 0:
-                non_op = round(((pre_t - op_p) / pre_t) * 100, 2)
-            
-            if code in ['3023', '3030']:
-                print(f"✅ {code} 計算成功: 稅前={pre_t}, 營業利益={op_p}, 業外%={non_op}")
-            
-            curr_dict[code] = {"eps": eps, "non_op": non_op}
+            curr_dict[code] = {"eps": eps, "op_p": op_p, "pre_t": pre_t}
 
-    # 寫入 Sheet 邏輯 (保持 USER_ENTERED 強制寫入數字)
     client = get_gspread_client()
-    ws_list = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-    for ws in ws_list:
+    spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
+    
+    for ws in spreadsheet.worksheets():
         if not any(n in ws.title for n in ["個股總表", "金融股"]): continue
         data = ws.get_all_values()
         h = data[0]
+        
         try:
             i_c = next(i for i, x in enumerate(h) if "代號" in x)
-            i_e = next(i for i, x in enumerate(h) if f"{Q_STRING}單季每股盈餘" in x.replace(' ', ''))
-            i_nop = next(i for i, x in enumerate(h) if "業外" in x and "%" in x)
+            # 我們強制定義 AN=40, AO=41, AP=42 (索引從 0 開始)
+            # 您可以觀察 Sheet 最後面是否出現這三欄數據
             
             cells = []
             for r_idx, row in enumerate(data[1:], start=2):
                 c_code = row[i_c].split('.')[0].strip()
                 if c_code in curr_dict:
-                    info = curr_dict[c_code]
-                    cells.append(gspread.Cell(row=r_idx, col=i_e+1, value=info["eps"])) # 先填累計 EPS 測試
-                    cells.append(gspread.Cell(row=r_idx, col=i_nop+1, value=info["non_op"]))
+                    d = curr_dict[c_code]
+                    # 填入 AN 欄 (索引 39): 原始 EPS
+                    cells.append(gspread.Cell(row=r_idx, col=40, value=d["eps"]))
+                    # 填入 AO 欄 (索引 40): 原始營業利益
+                    cells.append(gspread.Cell(row=r_idx, col=41, value=d["op_p"]))
+                    # 填入 AP 欄 (索引 41): 原始稅前淨利
+                    cells.append(gspread.Cell(row=r_idx, col=42, value=d["pre_t"]))
             
             if cells:
                 ws.update_cells(cells, value_input_option='USER_ENTERED')
-                print(f"📊 {ws.title} 寫入完成")
+                print(f"✅ {ws.title} 原始數據展示完畢 (AN-AP欄)")
         except Exception as e:
             print(f"❌ {ws.title} 錯誤: {e}")
 
