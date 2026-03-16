@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V186 防空值更新版)
-# 💡 策略： 只有當 API 提供非 0 的利潤數據時，才更新業外佔比，避免被 0 覆蓋
+# 📂 檔案名稱： update_finance.py (V187 聰明反推 Q4 恢復版)
+# 💡 策略： 恢復「累計盈餘扣除前三季得 Q4」的演算邏輯！財報不全時照樣先填 EPS。
 # ==========================================
 
 import os
@@ -21,7 +21,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def force_float(v):
-    if v is None: return 0.0
+    if v is None or v == "": return 0.0
     s = str(v).strip().replace(',', '')
     if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
     try: return float(s)
@@ -29,23 +29,27 @@ def force_float(v):
 
 def fetch_and_update():
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 擷取正式損益表
+    
+    # 抓取官方綜合損益表 API
     try:
         res_detail = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap11_L", headers=headers, verify=False, timeout=30).json()
         res_detail_o = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap11_O", headers=headers, verify=False, timeout=30).json()
         all_detail = res_detail + res_detail_o
-    except: return
+    except Exception as e: 
+        print(f"API 抓取失敗: {e}")
+        return
 
     stats = {}
     for item in all_detail:
+        # 鎖定 114 年 第 4 季 (即最新全年度)
         if str(item.get('年度')) == "114" and str(item.get('季別')) == "4":
             code = str(item.get('公司代號')).strip()
             op = force_float(item.get('營業利益（損失）'))
             pre_t = force_float(item.get('繼續營業單位稅前淨利（淨損）'))
-            eps = force_float(item.get('基本每股盈餘（元）'))
+            annual_eps = force_float(item.get('基本每股盈餘（元）')) # 這是全年度的累計 EPS
             
-            # 🌟 只有當數據不是 0 時才記錄
-            stats[code] = {"eps": eps, "op": op, "pre_t": pre_t}
+            # 只要有抓到 EPS 就先存起來，不管 op 是不是 0
+            stats[code] = {"annual_eps": annual_eps, "op": op, "pre_t": pre_t}
 
     client = get_gspread_client()
     spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
@@ -53,29 +57,49 @@ def fetch_and_update():
     for ws in spreadsheet.worksheets():
         if not any(n in ws.title for n in ["個股總表", "金融股"]): continue
         data = ws.get_all_values()
-        h = data[0]
-        i_c = next(i for i, x in enumerate(h) if "代號" in x)
-        i_nop = next(i for i, x in enumerate(h) if "業外" in x and "%" in x)
+        if not data: continue
         
+        h = data[0]
+        i_c = next((i for i, x in enumerate(h) if "代號" in x), -1)
+        i_nop = next((i for i, x in enumerate(h) if "業外" in x and "%" in x), -1)
+        
+        # 🔍 自動尋找表單中的 Q1, Q2, Q3 欄位位置，準備用來做數學扣除
+        i_q1 = next((i for i, x in enumerate(h) if "Q1" in str(x).upper()), -1)
+        i_q2 = next((i for i, x in enumerate(h) if "Q2" in str(x).upper()), -1)
+        i_q3 = next((i for i, x in enumerate(h) if "Q3" in str(x).upper()), -1)
+        
+        if i_c == -1: continue
+
         cells = []
         for r_idx, row in enumerate(data[1:], start=2):
             code = row[i_c].split('.')[0].strip()
+            
             if code in stats:
                 d = stats[code]
                 
-                # 🌟 關鍵邏輯：如果 API 抓到的是 0，就不更新這一格，保留原本的數據
-                if d["pre_t"] != 0:
+                # 讀取表單上已有的前三季 EPS
+                q1_eps = force_float(row[i_q1]) if i_q1 != -1 and i_q1 < len(row) else 0.0
+                q2_eps = force_float(row[i_q2]) if i_q2 != -1 and i_q2 < len(row) else 0.0
+                q3_eps = force_float(row[i_q3]) if i_q3 != -1 and i_q3 < len(row) else 0.0
+                
+                # 🌟 恢復您的精準邏輯：Q4 單季 = 全年累計 - (Q1+Q2+Q3)
+                q4_eps_calculated = round(d["annual_eps"] - q1_eps - q2_eps - q3_eps, 2)
+                
+                # 先把算好的 Q4 EPS 填入 AO 欄 (col=41)！不管損益表齊不齊全都會填！
+                cells.append(gspread.Cell(row=r_idx, col=41, value=q4_eps_calculated))
+                
+                # 接下來檢查損益表明細。如果有營業利益，才計算並更新業外佔比
+                if d["pre_t"] != 0 and d["op"] != 0:
                     non_op_ratio = round(((d["pre_t"] - d["op"]) / d["pre_t"]) * 100, 2)
                     cells.append(gspread.Cell(row=r_idx, col=i_nop+1, value=non_op_ratio))
-                
-                # 同步更新 AO-AR 證據欄，方便我們觀察 API 什麼時候「活過來」
-                cells.append(gspread.Cell(row=r_idx, col=41, value=d["eps"]))
-                cells.append(gspread.Cell(row=r_idx, col=42, value=d["op"]))
-                cells.append(gspread.Cell(row=r_idx, col=43, value=d["pre_t"]))
+                    
+                    # 更新 AP、AQ 證據欄
+                    cells.append(gspread.Cell(row=r_idx, col=42, value=d["op"]))
+                    cells.append(gspread.Cell(row=r_idx, col=43, value=d["pre_t"]))
         
         if cells:
             ws.update_cells(cells, value_input_option='USER_ENTERED')
-            print(f"📊 {ws.title} 掃描更新完成。")
+            print(f"📊 {ws.title} 掃描與 Q4 演算填寫完成。")
 
 if __name__ == "__main__":
     fetch_and_update()
