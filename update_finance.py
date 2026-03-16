@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V191 精準鎖定版)
-# 💡 策略： 配合最新表頭，精準鎖定 Y欄、Z欄、T欄！
+# 📂 檔案名稱： update_finance.py (V193 終極完美版)
+# 💡 策略： 鎖定四大標準表頭 + 暴力破解政府財報欄位名稱
 # ==========================================
 
 import os
@@ -50,13 +50,23 @@ def fetch_and_update():
         
         # 鎖定 114 年 第 4 季
         if y == "114" and q == "4":
-            revenue = force_float(item.get('營業收入'))
-            op_profit = force_float(item.get('營業利益（損失）'))
-            annual_eps = force_float(item.get('基本每股盈餘（元）'))
+            revenue = 0.0
+            op_profit = 0.0
+            non_op_income = 0.0
+            annual_eps = 0.0
+            
+            # 🌟 V193 關鍵 1：用關鍵字掃描，無視政府全形半形括號陷阱！不怕讀不到數字！
+            for k, v in item.items():
+                if '營業收入' in k: revenue = force_float(v)
+                elif '營業利益' in k: op_profit = force_float(v)
+                elif '營業外收入' in k: non_op_income = force_float(v)
+                elif '每股盈餘' in k: annual_eps = force_float(v)
+
             stats[code] = {
                 "annual_eps": annual_eps, 
                 "revenue": revenue,
-                "op_profit": op_profit
+                "op_profit": op_profit,
+                "non_op_income": non_op_income
             }
 
     print(f"✅ 成功獲取 114年 Q4 資料，共 {len(stats)} 檔股票準備寫入！\n")
@@ -72,33 +82,32 @@ def fetch_and_update():
         h = data[0]
         i_c = next((i for i, x in enumerate(h) if "代號" in x), -1)
         
-        # 🌟 V191 關鍵：依照最新截圖重新設定關鍵字！ 🌟
-        # 1. 找前三季EPS來扣
+        # 尋找計算用的前三季
         i_q1 = next((i for i, x in enumerate(h) if "25Q1" in str(x).upper()), -1)
         i_q2 = next((i for i, x in enumerate(h) if "25Q2" in str(x).upper()), -1)
         i_q3 = next((i for i, x in enumerate(h) if "25Q3" in str(x).upper()), -1)
         
-        # 2. 找目標欄位：Y欄 (Q4)、Z欄 (累計)、T欄 (營益率)
-        i_q4_target = next((i for i, x in enumerate(h) if "25Q4" in str(x).upper() and "單季" in str(x)), -1)
+        # 🌟 V193 關鍵 2：完全依照您的「四大標準表頭」精準定位！
+        i_op_m_target = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x)), -1)
+        i_q4_target = next((i for i, x in enumerate(h) if "25Q4單季每股盈餘" in str(x)), -1)
         i_accum_eps_target = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in str(x)), -1)
-        i_op_m_target = next((i for i, x in enumerate(h) if "營益率" in str(x) and "%" in str(x)), -1)
+        i_nop_target = next((i for i, x in enumerate(h) if "最新單季業外損益佔稅前淨利" in str(x)), -1)
         
         if i_c == -1: continue
-
-        print(f"🔍 {ws.title} 定位狀態：25Q4單季(Y)={i_q4_target}, 最新累季(Z)={i_accum_eps_target}, 營益率(T)={i_op_m_target}")
 
         cells = []
         for r_idx, row in enumerate(data[1:], start=2):
             code = row[i_c].split('.')[0].strip()
             
+            # 只針對有資料的股票進行計算
             if code in stats:
                 d = stats[code]
                 
-                # 1. 填入 Z欄：全年累計 EPS (直接拿官方資料)
+                # 1. 填入 累計 EPS
                 if i_accum_eps_target != -1:
                     cells.append(gspread.Cell(row=r_idx, col=i_accum_eps_target+1, value=d["annual_eps"]))
 
-                # 2. 填入 Y欄：算出 Q4 EPS (累計 - 前三季)
+                # 2. 填入 Q4 EPS (累計 - 前三季)
                 if i_q4_target != -1:
                     q1_eps = force_float(row[i_q1]) if i_q1 != -1 and i_q1 < len(row) else 0.0
                     q2_eps = force_float(row[i_q2]) if i_q2 != -1 and i_q2 < len(row) else 0.0
@@ -106,16 +115,21 @@ def fetch_and_update():
                     q4_eps_calculated = round(d["annual_eps"] - q1_eps - q2_eps - q3_eps, 2)
                     cells.append(gspread.Cell(row=r_idx, col=i_q4_target+1, value=q4_eps_calculated))
                 
-                # 3. 填入 T欄：營益率%
+                # 3. 填入 單季營益率%
                 if d["revenue"] != 0 and i_op_m_target != -1:
                     op_margin = round((d["op_profit"] / d["revenue"]) * 100, 2)
                     cells.append(gspread.Cell(row=r_idx, col=i_op_m_target+1, value=op_margin))
+                    
+                # 4. 填入 業外損益佔稅前淨利% 
+                # (稅前淨利 = 營業利益 + 業外收入及支出)
+                pre_tax_profit = d["non_op_income"] + d["op_profit"]
+                if pre_tax_profit != 0 and i_nop_target != -1:
+                    non_op_ratio = round((d["non_op_income"] / pre_tax_profit) * 100, 2)
+                    cells.append(gspread.Cell(row=r_idx, col=i_nop_target+1, value=non_op_ratio))
         
         if cells:
             ws.update_cells(cells, value_input_option='USER_ENTERED')
             print(f"📊 {ws.title} 更新完成。寫入了 {len(cells)} 個儲存格。")
-        else:
-            print(f"⚠️ {ws.title} 沒有寫入。可能是找不到對應的表頭名稱。")
 
 if __name__ == "__main__":
     fetch_and_update()
