@@ -1,7 +1,7 @@
 # ==========================================
 # 📂 檔案名稱： update_finance.py (後台自動更新大師 - Streamlit 雲端版)
 # 💡 目的： 抓取官方本益比與殖利率，計算配息率後，精準寫入「盈餘總分配率」
-# 🛠️ 修正： 將寫入表單的數字強制轉為字串 (str)，解決 Google API 格式報錯
+# 🛠️ 修正： 改用「整欄區塊寫入 (ws.update)」，徹底解決 Google API 的 ListValue 報錯 Bug！
 # ==========================================
 
 import streamlit as st
@@ -91,18 +91,17 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
             status.update(label="[2/3] 連線 Google Sheet 戰情室...")
             client = get_gspread_client()
             worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
-            # 鎖定包含目標字眼的分頁
             target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
 
             # ----------------------------------------
-            # 3. 寫入資料 (絕對精準比對 + 強制轉字串防呆)
+            # 3. 寫入資料 (整欄區塊寫入法)
             # ----------------------------------------
-            status.update(label="[3/3] 開始寫入各分頁配息率...")
+            status.update(label="[3/3] 開始寫入各分頁配息率 (高速整欄模式)...")
             total_updated = 0
             
             for ws in target_sheets:
                 data = ws.get_all_values()
-                if not data: continue
+                if not data or len(data) < 2: continue
                 
                 headers_row = data[0]
                 
@@ -111,26 +110,39 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                 p_idx = next((i for i, x in enumerate(headers_row) if str(x).strip() == "盈餘總分配率"), -1)
                 
                 if c_idx != -1 and p_idx != -1:
-                    cells_to_update = []
-                    for r, row in enumerate(data):
-                        if r == 0: continue # 跳過表頭
+                    # 準備一整直排的資料
+                    col_values = []
+                    cells_updated = 0
+                    
+                    for r in range(1, len(data)):
+                        row = data[r]
                         code = str(row[c_idx]).split('.')[0].strip()
                         
-                        # 如果代號有在我們算好的名單裡，就更新它
                         if code in magic_payout_dict:
-                            # 💡 這裡就是關鍵修正：加上 str() 把它變成文字，Google 就不會生氣了！
-                            cells_to_update.append(gspread.Cell(row=r+1, col=p_idx+1, value=str(magic_payout_dict[code])))
-                    
-                    # 批次大量更新 Google Sheet
-                    if cells_to_update:
-                        ws.update_cells(cells_to_update, value_input_option='USER_ENTERED')
-                        total_updated += len(cells_to_update)
-                        st.write(f"📝 分頁 **[{ws.title}]** 成功更新了 {len(cells_to_update)} 檔！")
+                            # 填入算好的新配息率
+                            col_values.append([magic_payout_dict[code]])
+                            cells_updated += 1
+                        else:
+                            # 保持原本的數值不變 (防呆處理)
+                            old_val = row[p_idx] if p_idx < len(row) else ""
+                            col_values.append([old_val])
+                            
+                    if cells_updated > 0:
+                        # 找出該欄位的英文代號 (例如第7欄就是 G)
+                        col_letter = gspread.utils.rowcol_to_a1(1, p_idx+1).replace('1', '')
+                        # 框出整條欄位的範圍 (例如 G2:G1000)
+                        range_str = f"{col_letter}2:{col_letter}{len(data)}"
+                        
+                        # 💡 終極解法：整排一次覆寫，絕對不會發生格式錯亂的 Bug！
+                        ws.update(values=col_values, range_name=range_str)
+                        
+                        total_updated += cells_updated
+                        st.write(f"📝 分頁 **[{ws.title}]** 成功更新了 {cells_updated} 檔！")
                 else:
                     st.warning(f"⚠️ 分頁 **[{ws.title}]** 找不到名為「盈餘總分配率」的欄位，已跳過。")
 
             status.update(label=f"🎉 任務圓滿完成！總共更新了 {total_updated} 檔股票的配息率！", state="complete")
-            st.balloons() # 噴發慶祝氣球
+            st.balloons() 
 
         except Exception as e:
             status.update(label="發生錯誤", state="error")
