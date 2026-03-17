@@ -1,6 +1,7 @@
 # ==========================================
 # 📂 檔案名稱： update_finance.py (後台自動更新大師 - Streamlit 雲端版)
 # 💡 目的： 抓取官方本益比與殖利率，計算配息率後，精準寫入「盈餘總分配率」
+# 🛠️ 修正： 將寫入表單的數字強制轉為字串 (str)，解決 Google API 格式報錯
 # ==========================================
 
 import streamlit as st
@@ -94,7 +95,7 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
             target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
 
             # ----------------------------------------
-            # 3. 寫入資料 (絕對精準比對)
+            # 3. 寫入資料 (絕對精準比對 + 強制轉字串防呆)
             # ----------------------------------------
             status.update(label="[3/3] 開始寫入各分頁配息率...")
             total_updated = 0
@@ -117,7 +118,8 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                         
                         # 如果代號有在我們算好的名單裡，就更新它
                         if code in magic_payout_dict:
-                            cells_to_update.append(gspread.Cell(row=r+1, col=p_idx+1, value=magic_payout_dict[code]))
+                            # 💡 這裡就是關鍵修正：加上 str() 把它變成文字，Google 就不會生氣了！
+                            cells_to_update.append(gspread.Cell(row=r+1, col=p_idx+1, value=str(magic_payout_dict[code])))
                     
                     # 批次大量更新 Google Sheet
                     if cells_to_update:
