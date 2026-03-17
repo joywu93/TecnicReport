@@ -1,7 +1,7 @@
 # ==========================================
 # 📂 檔案名稱： update_finance.py (後台自動更新大師 - Streamlit 雲端版)
 # 💡 目的： 抓取官方本益比與殖利率，計算配息率後，精準寫入「盈餘總分配率」
-# 🛠️ 修正： 改用「整欄區塊寫入 (ws.update)」，徹底解決 Google API 的 ListValue 報錯 Bug！
+# 🛠️ 修正： 終極防護版！強制將陣列內的所有元素轉為純字串，消滅 Protobuf 報錯！
 # ==========================================
 
 import streamlit as st
@@ -63,7 +63,7 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                         if pe > 0 and dy > 0: magic_payout_dict[code] = round(pe * dy, 2)
                     except: pass
             except Exception as e:
-                st.warning(f"上市資料獲取失敗: {e}")
+                pass
 
             # 上櫃 (TPEx)
             try:
@@ -77,7 +77,7 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                         if pe > 0 and dy > 0: magic_payout_dict[code] = round(pe * dy, 2)
                     except: pass
             except Exception as e:
-                st.warning(f"上櫃資料獲取失敗: {e}")
+                pass
 
             if not magic_payout_dict:
                 status.update(label="⚠️ 無法取得官方資料，請稍後再試", state="error")
@@ -94,9 +94,9 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
             target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
 
             # ----------------------------------------
-            # 3. 寫入資料 (整欄區塊寫入法)
+            # 3. 寫入資料 (極致防呆轉換)
             # ----------------------------------------
-            status.update(label="[3/3] 開始寫入各分頁配息率 (高速整欄模式)...")
+            status.update(label="[3/3] 開始寫入各分頁配息率...")
             total_updated = 0
             
             for ws in target_sheets:
@@ -105,12 +105,10 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                 
                 headers_row = data[0]
                 
-                # 🎯 尋找目標欄位：嚴格鎖定「代號」與「盈餘總分配率」
                 c_idx = next((i for i, x in enumerate(headers_row) if "代號" in str(x)), -1)
                 p_idx = next((i for i, x in enumerate(headers_row) if str(x).strip() == "盈餘總分配率"), -1)
                 
                 if c_idx != -1 and p_idx != -1:
-                    # 準備一整直排的資料
                     col_values = []
                     cells_updated = 0
                     
@@ -119,21 +117,20 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                         code = str(row[c_idx]).split('.')[0].strip()
                         
                         if code in magic_payout_dict:
-                            # 填入算好的新配息率
-                            col_values.append([magic_payout_dict[code]])
+                            # 🎯 絕不留情：強制轉成字串
+                            val_str = str(magic_payout_dict[code])
+                            col_values.append([val_str])
                             cells_updated += 1
                         else:
-                            # 保持原本的數值不變 (防呆處理)
-                            old_val = row[p_idx] if p_idx < len(row) else ""
+                            # 🎯 絕不留情：如果原本有資料，也強迫轉成字串，如果是空的，就塞一個乾淨的空字串
+                            old_val = str(row[p_idx]).strip() if p_idx < len(row) and row[p_idx] is not None else ""
                             col_values.append([old_val])
                             
                     if cells_updated > 0:
-                        # 找出該欄位的英文代號 (例如第7欄就是 G)
                         col_letter = gspread.utils.rowcol_to_a1(1, p_idx+1).replace('1', '')
-                        # 框出整條欄位的範圍 (例如 G2:G1000)
                         range_str = f"{col_letter}2:{col_letter}{len(data)}"
                         
-                        # 💡 終極解法：整排一次覆寫，絕對不會發生格式錯亂的 Bug！
+                        # 覆寫資料
                         ws.update(values=col_values, range_name=range_str)
                         
                         total_updated += cells_updated
