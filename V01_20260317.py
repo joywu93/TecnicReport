@@ -50,7 +50,7 @@ st.markdown("""
 
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-st.title("📊 2026 戰略指揮 (V182 完美修復版)")
+st.title("📊 2026 戰略指揮 (V01版)")
 
 def force_rerun():
     try:
