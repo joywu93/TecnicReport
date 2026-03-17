@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： UpDate.py (後台自動更新大師 - Streamlit 雲端版)
-# 💡 目的： 抓取官方本益比與殖利率，計算配息率後，全自動寫入 Google Sheet
+# 📂 檔案名稱： update_finance.py (後台自動更新大師 - Streamlit 雲端版)
+# 💡 目的： 抓取官方本益比與殖利率，計算配息率後，精準寫入「盈餘總分配率」
 # ==========================================
 
 import streamlit as st
@@ -16,8 +16,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ==========================================
 # 網頁與系統設定
 # ==========================================
-st.set_page_config(page_title="後台更新大師", layout="centered", page_icon="🤖")
-st.title("🤖 雲端後台更新大師 (UpDate.py)")
+st.set_page_config(page_title="財務後台更新大師", layout="centered", page_icon="🤖")
+st.title("🤖 雲端財務數據更新大師 (update_finance.py)")
 
 # 您的 Google Sheet 網址
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
@@ -35,9 +35,9 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 # ==========================================
-# 🚀 核心功能：更新盈餘總分配率
+# 🚀 核心功能：更新「盈餘總分配率」
 # ==========================================
-st.markdown("### 🎯 盈餘總分配率 (配息率) 雲端清洗站")
+st.markdown("### 🎯 【盈餘總分配率】雲端清洗站")
 st.info("💡 **運作原理**：潛入證交所與櫃買中心，抓取每日最新『本益比』與『殖利率』，利用反向公式計算出全市場的隱含配息率，並自動覆寫您的 Google Sheet。")
 
 if st.button("🚀 執行全市場配息率更新", type="primary", use_container_width=True):
@@ -94,7 +94,7 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
             target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
 
             # ----------------------------------------
-            # 3. 寫入資料
+            # 3. 寫入資料 (絕對精準比對)
             # ----------------------------------------
             status.update(label="[3/3] 開始寫入各分頁配息率...")
             total_updated = 0
@@ -104,9 +104,10 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                 if not data: continue
                 
                 headers_row = data[0]
-                # 尋找目標欄位：代號、盈餘總分配率
+                
+                # 🎯 尋找目標欄位：嚴格鎖定「代號」與「盈餘總分配率」
                 c_idx = next((i for i, x in enumerate(headers_row) if "代號" in str(x)), -1)
-                p_idx = next((i for i, x in enumerate(headers_row) if "盈餘總分配率" in str(x) or "分配率" == str(x).strip() or "分配率" in str(x)), -1)
+                p_idx = next((i for i, x in enumerate(headers_row) if str(x).strip() == "盈餘總分配率"), -1)
                 
                 if c_idx != -1 and p_idx != -1:
                     cells_to_update = []
@@ -123,6 +124,8 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
                         ws.update_cells(cells_to_update, value_input_option='USER_ENTERED')
                         total_updated += len(cells_to_update)
                         st.write(f"📝 分頁 **[{ws.title}]** 成功更新了 {len(cells_to_update)} 檔！")
+                else:
+                    st.warning(f"⚠️ 分頁 **[{ws.title}]** 找不到名為「盈餘總分配率」的欄位，已跳過。")
 
             status.update(label=f"🎉 任務圓滿完成！總共更新了 {total_updated} 檔股票的配息率！", state="complete")
             st.balloons() # 噴發慶祝氣球
@@ -132,4 +135,4 @@ if st.button("🚀 執行全市場配息率更新", type="primary", use_containe
             st.error(f"系統錯誤: {e}")
 
 st.divider()
-st.caption("🚀 2026 戰略指揮 - 專屬後台更新系統")
+st.caption("🚀 2026 戰略指揮 - 專屬財務後台更新系統")
