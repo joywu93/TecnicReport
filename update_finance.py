@@ -1,152 +1,135 @@
 # ==========================================
-# 📂 檔案名稱： update_finance.py (V194 股利整合最終版)
-# 💡 策略： 雙雷達啟動！同時抓取「Q4財報」與「最新公告股利」，精準鎖定表頭！
+# 📂 檔案名稱： UpDate.py (後台自動更新大師 - Streamlit 雲端版)
+# 💡 目的： 抓取官方本益比與殖利率，計算配息率後，全自動寫入 Google Sheet
 # ==========================================
 
-import os
+import streamlit as st
 import requests
+import urllib3
 import gspread
 from google.oauth2.service_account import Credentials
-import urllib3
 import json
 
+# 關閉煩人的「未加密警告」提示音
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ==========================================
+# 網頁與系統設定
+# ==========================================
+st.set_page_config(page_title="後台更新大師", layout="centered", page_icon="🤖")
+st.title("🤖 雲端後台更新大師 (UpDate.py)")
+
+# 您的 Google Sheet 網址
 MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
 def get_gspread_client():
-    key_data = os.environ.get("GOOGLE_KEY_JSON")
-    creds_dict = json.loads(key_data)
-    creds = Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    """使用 Streamlit 雲端的 Secrets 進行 Google 認證"""
+    if "google_key" not in st.secrets: 
+        st.error("❌ 找不到 Google 金鑰 (st.secrets)，請確認雲端環境設定。")
+        st.stop()
+    key_data = st.secrets["google_key"]
+    creds = Credentials.from_service_account_info(
+        json.loads(key_data) if isinstance(key_data, str) else dict(key_data), 
+        scopes=['https://www.googleapis.com/auth/spreadsheets']
+    )
     return gspread.authorize(creds)
 
-def force_float(v):
-    if v is None or str(v).strip() == "": return 0.0
-    s = str(v).strip().replace(',', '')
-    if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
-    try: return float(s)
-    except: return 0.0
+# ==========================================
+# 🚀 核心功能：更新盈餘總分配率
+# ==========================================
+st.markdown("### 🎯 盈餘總分配率 (配息率) 雲端清洗站")
+st.info("💡 **運作原理**：潛入證交所與櫃買中心，抓取每日最新『本益比』與『殖利率』，利用反向公式計算出全市場的隱含配息率，並自動覆寫您的 Google Sheet。")
 
-def fetch_and_update():
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    
-    # --- 雷達 1：綜合損益表 (抓 EPS、營益率、業外) ---
-    url_twse_fin = "https://openapi.twse.com.tw/v1/opendata/t187ap14_L"
-    url_tpex_fin = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O"
-    
-    # --- 雷達 2：董事會決議股利分派 (抓 現金+股票股利) ---
-    url_twse_div = "https://openapi.twse.com.tw/v1/opendata/t187ap08_L"
-    url_tpex_div = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap08_O"
-    
-    try:
-        print("📡 下載最新【綜合損益表】與【股利分派】...")
-        res_fin = requests.get(url_twse_fin, headers=headers, verify=False, timeout=30).json() + \
-                  requests.get(url_tpex_fin, headers=headers, verify=False, timeout=30).json()
-                  
-        res_div = requests.get(url_twse_div, headers=headers, verify=False, timeout=30).json() + \
-                  requests.get(url_tpex_div, headers=headers, verify=False, timeout=30).json()
-    except Exception as e: 
-        print(f"❌ API 抓取失敗: {e}")
-        return
+if st.button("🚀 執行全市場配息率更新", type="primary", use_container_width=True):
+    with st.status("啟動雲端更新程序...", expanded=True) as status:
+        try:
+            # ----------------------------------------
+            # 1. 抓取官方資料
+            # ----------------------------------------
+            status.update(label="[1/3] 潛入官方資料庫，獲取本益比與殖利率...")
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            magic_payout_dict = {}
 
-    # 彙整財報數據
-    stats = {}
-    for item in res_fin:
-        code = str(item.get('公司代號')).strip()
-        y = str(item.get('年度'))
-        q = str(item.get('季別'))
-        
-        # 鎖定 114 年 第 4 季
-        if y == "114" and q == "4":
-            revenue = op_profit = non_op_income = annual_eps = 0.0
+            # 上市 (TWSE)
+            try:
+                url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
+                res_twse = requests.get(url_twse, headers=headers, verify=False, timeout=15).json()
+                for item in res_twse:
+                    code = str(item.get('Code', '')).strip()
+                    try:
+                        pe = float(str(item.get('PeRatio', '0')).replace(',', ''))
+                        dy = float(str(item.get('DividendYield', '0')).replace(',', ''))
+                        if pe > 0 and dy > 0: magic_payout_dict[code] = round(pe * dy, 2)
+                    except: pass
+            except Exception as e:
+                st.warning(f"上市資料獲取失敗: {e}")
+
+            # 上櫃 (TPEx)
+            try:
+                url_tpex = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_perwd_quotes"
+                res_tpex = requests.get(url_tpex, headers=headers, verify=False, timeout=15).json()
+                for item in res_tpex:
+                    code = str(item.get('SecuritiesCompanyCode', '')).strip()
+                    try:
+                        pe = float(str(item.get('PERatio', '0')).replace(',', ''))
+                        dy = float(str(item.get('Dividendyield', '0')).replace(',', ''))
+                        if pe > 0 and dy > 0: magic_payout_dict[code] = round(pe * dy, 2)
+                    except: pass
+            except Exception as e:
+                st.warning(f"上櫃資料獲取失敗: {e}")
+
+            if not magic_payout_dict:
+                status.update(label="⚠️ 無法取得官方資料，請稍後再試", state="error")
+                st.stop()
+
+            st.write(f"✅ 成功反推計算出 **{len(magic_payout_dict)}** 檔股票的配息率！")
+
+            # ----------------------------------------
+            # 2. 連線 Google Sheet
+            # ----------------------------------------
+            status.update(label="[2/3] 連線 Google Sheet 戰情室...")
+            client = get_gspread_client()
+            worksheets = client.open_by_url(MASTER_GSHEET_URL).worksheets()
+            # 鎖定包含目標字眼的分頁
+            target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+
+            # ----------------------------------------
+            # 3. 寫入資料
+            # ----------------------------------------
+            status.update(label="[3/3] 開始寫入各分頁配息率...")
+            total_updated = 0
             
-            for k, v in item.items():
-                if '營業收入' in k: revenue = force_float(v)
-                elif '營業利益' in k: op_profit = force_float(v)
-                elif '營業外收入' in k: non_op_income = force_float(v)
-                elif '每股盈餘' in k: annual_eps = force_float(v)
+            for ws in target_sheets:
+                data = ws.get_all_values()
+                if not data: continue
+                
+                headers_row = data[0]
+                # 尋找目標欄位：代號、盈餘總分配率
+                c_idx = next((i for i, x in enumerate(headers_row) if "代號" in str(x)), -1)
+                p_idx = next((i for i, x in enumerate(headers_row) if "盈餘總分配率" in str(x) or "分配率" == str(x).strip() or "分配率" in str(x)), -1)
+                
+                if c_idx != -1 and p_idx != -1:
+                    cells_to_update = []
+                    for r, row in enumerate(data):
+                        if r == 0: continue # 跳過表頭
+                        code = str(row[c_idx]).split('.')[0].strip()
+                        
+                        # 如果代號有在我們算好的名單裡，就更新它
+                        if code in magic_payout_dict:
+                            cells_to_update.append(gspread.Cell(row=r+1, col=p_idx+1, value=magic_payout_dict[code]))
+                    
+                    # 批次大量更新 Google Sheet
+                    if cells_to_update:
+                        ws.update_cells(cells_to_update, value_input_option='USER_ENTERED')
+                        total_updated += len(cells_to_update)
+                        st.write(f"📝 分頁 **[{ws.title}]** 成功更新了 {len(cells_to_update)} 檔！")
 
-            stats[code] = {
-                "annual_eps": annual_eps, 
-                "revenue": revenue,
-                "op_profit": op_profit,
-                "non_op_income": non_op_income
-            }
+            status.update(label=f"🎉 任務圓滿完成！總共更新了 {total_updated} 檔股票的配息率！", state="complete")
+            st.balloons() # 噴發慶祝氣球
 
-    # 彙整股利數據
-    div_stats = {}
-    for item in res_div:
-        code = str(item.get('公司代號')).strip()
-        # 現金股利 (盈餘分配 + 公積發放)
-        cash_1 = force_float(item.get('盈餘分配之現金股利(元/股)'))
-        cash_2 = force_float(item.get('法定盈餘公積、資本公積發放之現金(元/股)'))
-        # 股票股利 (盈餘轉增資 + 公積轉增資)
-        stock_1 = force_float(item.get('盈餘轉增資配股(元/股)'))
-        stock_2 = force_float(item.get('法定盈餘公積、資本公積轉增資配股(元/股)'))
-        
-        total_div = cash_1 + cash_2 + stock_1 + stock_2
-        if code not in div_stats: div_stats[code] = 0.0
-        div_stats[code] += total_div # 加總合計股利
+        except Exception as e:
+            status.update(label="發生錯誤", state="error")
+            st.error(f"系統錯誤: {e}")
 
-    print(f"✅ 獲取 114年 Q4 財報：{len(stats)} 檔，最新公告股利：{len(div_stats)} 檔！\n")
-
-    client = get_gspread_client()
-    spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
-    
-    for ws in spreadsheet.worksheets():
-        if not any(n in ws.title for n in ["個股總表", "金融股"]): continue
-        data = ws.get_all_values()
-        if not data: continue
-        
-        h = data[0]
-        i_c = next((i for i, x in enumerate(h) if "代號" in x), -1)
-        
-        # 財報計算用的前三季
-        i_q1 = next((i for i, x in enumerate(h) if "25Q1" in str(x).upper()), -1)
-        i_q2 = next((i for i, x in enumerate(h) if "25Q2" in str(x).upper()), -1)
-        i_q3 = next((i for i, x in enumerate(h) if "25Q3" in str(x).upper()), -1)
-        
-        # 🌟 四大財報標準表頭 + 全新股利表頭
-        i_op_m_target = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x)), -1)
-        i_q4_target = next((i for i, x in enumerate(h) if "25Q4單季每股盈餘" in str(x)), -1)
-        i_accum_eps_target = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in str(x)), -1)
-        i_nop_target = next((i for i, x in enumerate(h) if "最新單季業外損益佔稅前淨利" in str(x)), -1)
-        i_div_target = next((i for i, x in enumerate(h) if "2026合計股利" in str(x)), -1) # 🎯 股利目標欄位
-        
-        if i_c == -1: continue
-
-        cells = []
-        for r_idx, row in enumerate(data[1:], start=2):
-            code = row[i_c].split('.')[0].strip()
-            
-            # 處理財報寫入
-            if code in stats:
-                d = stats[code]
-                if i_accum_eps_target != -1:
-                    cells.append(gspread.Cell(row=r_idx, col=i_accum_eps_target+1, value=d["annual_eps"]))
-                if i_q4_target != -1:
-                    q1_eps = force_float(row[i_q1]) if i_q1 != -1 and i_q1 < len(row) else 0.0
-                    q2_eps = force_float(row[i_q2]) if i_q2 != -1 and i_q2 < len(row) else 0.0
-                    q3_eps = force_float(row[i_q3]) if i_q3 != -1 and i_q3 < len(row) else 0.0
-                    q4_eps_calculated = round(d["annual_eps"] - q1_eps - q2_eps - q3_eps, 2)
-                    cells.append(gspread.Cell(row=r_idx, col=i_q4_target+1, value=q4_eps_calculated))
-                if d["revenue"] != 0 and i_op_m_target != -1:
-                    op_margin = round((d["op_profit"] / d["revenue"]) * 100, 2)
-                    cells.append(gspread.Cell(row=r_idx, col=i_op_m_target+1, value=op_margin))
-                pre_tax_profit = d["non_op_income"] + d["op_profit"]
-                if pre_tax_profit != 0 and i_nop_target != -1:
-                    non_op_ratio = round((d["non_op_income"] / pre_tax_profit) * 100, 2)
-                    cells.append(gspread.Cell(row=r_idx, col=i_nop_target+1, value=non_op_ratio))
-
-            # 處理股利寫入 🎯
-            if code in div_stats and i_div_target != -1:
-                # 只填寫有公告股利的公司
-                if div_stats[code] > 0:
-                    cells.append(gspread.Cell(row=r_idx, col=i_div_target+1, value=round(div_stats[code], 2)))
-        
-        if cells:
-            ws.update_cells(cells, value_input_option='USER_ENTERED')
-            print(f"📊 {ws.title} 更新完成。寫入了 {len(cells)} 個儲存格（含財報與股利）。")
-
-if __name__ == "__main__":
-    fetch_and_update()
+st.divider()
+st.caption("🚀 2026 戰略指揮 - 專屬後台更新系統")
