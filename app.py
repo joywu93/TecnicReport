@@ -1,135 +1,135 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import gspread, re, smtplib, json
-from email.mime.text import MIMEText
+# ==========================================
+# 📂 檔案名稱： update_finance.py (V193 終極完美版)
+# 💡 策略： 鎖定四大標準表頭 + 暴力破解政府財報欄位名稱
+# ==========================================
+
+import os
+import requests
+import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+import urllib3
+import json
 
-# --- 1. 112 檔名單 + 加權指數 ---
-# 💡 已經將 "^TWII":"加權指數" 加入字典第一位
-STOCK_NAMES = {"^TWII":"加權指數","1464":"得力","1517":"利奇","1522":"堤維西","1597":"直得","1616":"億泰","2228":"劍麟","2313":"華通","2317":"鴻海","2327":"國巨","2330":"台積電","2344":"華邦電","2368":"金像電","2376":"技嘉","2377":"微星","2379":"瑞昱","2382":"廣達","2383":"台光電","2397":"友通","2404":"漢唐","2408":"南亞科","2439":"美律","2441":"超豐","2449":"京元電子","2454":"聯發科","2493":"揚博","2615":"萬海","3005":"神基","3014":"聯陽","3017":"奇鋐","3023":"信邦","3030":"德律","3037":"欣興","3042":"晶技","3078":"僑威","3163":"波若威","3167":"大量","3217":"優群","3219":"倚強科","3227":"原相","3231":"緯創","3264":"欣銓","3265":"台星科","3303":"岱稜","3357":"臺慶科","3402":"漢科","3406":"玉晶光","3416":"融程電","3441":"聯一光","3450":"聯鈞","3455":"由田","3479":"安勤","3483":"力致","3484":"崧騰","3515":"華擎","3526":"凡甲","3548":"兆利","3570":"大塚","3596":"智易","3679":"新至陞","3711":"日月光投控","3712":"永崴投控","4554":"橙的","4760":"勤凱","4763":"材料*-KY","4766":"南寶","4915":"致伸","4953":"緯軟","4961":"天鈺","4979":"華星光","5225":"東科-KY","5236":"力領科技","5284":"jpp-KY","5388":"中磊","5439":"高技","5871":"中租-KY","6104":"創惟","6121":"新普","6139":"亞翔","6143":"振曜","6158":"禾昌","6176":"瑞儀","6187":"萬潤","6197":"佳必琪","6203":"海韻電","6221":"晉泰","6227":"茂崙","6257":"矽格","6261":"久元","6274":"台燿","6278":"台表科","6285":"啟碁","6290":"良維","6538":"倉和","6579":"研揚","6605":"帝寶","6613":"朋億*","6629":"泰金-KY","6651":"全宇昕","6667":"信紘科","6768":"志強-KY","6788":"華景電","6894":"衛司特","6951":"靑新-創","6967":"汎瑋材料","6996":"力領科技","8081":"致新","8358":"金居","8432":"東生華","8473":"山林水","8938":"明安","9914":"美利達","9939":"宏全"}
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 2. 戰略分析大腦 ---
-def analyze_strategy(df, t):
-    try:
-        if df.empty or len(df) < 240: return "資料不足", 0, 0, 0, False
-        df.columns = df.columns.get_level_values(0)
-        close, lows, highs, volume = df['Close'].astype(float).dropna(), df['Low'].astype(float).dropna(), df['High'].astype(float).dropna(), df['Volume'].astype(float).dropna()
-        curr_p, prev_p, p3_close = float(close.iloc[-1]), float(close.iloc[-2]), float(close.iloc[-4])
-        curr_v, prev_v = float(volume.iloc[-1]), float(volume.iloc[-2])
-        ma5, ma10, ma20, ma60, ma240 = close.rolling(5).mean(), close.rolling(10).mean(), close.rolling(20).mean(), close.rolling(60).mean(), close.rolling(240).mean()
-        v5, v10, v20, v60, v240 = float(ma5.iloc[-1]), float(ma10.iloc[-1]), float(ma20.iloc[-1]), float(ma60.iloc[-1]), float(ma240.iloc[-1])
-        bias = ((curr_p - v60) / v60) * 100
-        msg, is_mail = [], False
+MASTER_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1TI1RBZVFgqO8ir-PhMMakL7fBcuBP06fiklKPGENH5g/edit?usp=sharing"
 
-        # 季線與強勢戰略
-        if prev_p < v60 and curr_p > v60: msg.append(f"🚀 轉多：站上季線({curr_p:.1f})"); is_mail = True
-        elif prev_p > v60 and curr_p < v60: msg.append(f"📉 轉空：跌破季線({curr_p:.1f})"); is_mail = True
-        if (curr_p - prev_p)/prev_p >= 0.05 and curr_v > prev_v * 1.5: 
-            msg.append(f"🔥 強勢反彈：慎防跌破 {p3_close:.1f}"); is_mail = True
-        
-        # 底部轉折
-        up_tags = []
-        if ma5.diff().iloc[-1] > 0: up_tags.append(f"5SMA({v5:.1f})")
-        if ma10.diff().iloc[-1] > 0: up_tags.append(f"10SMA({v10:.1f})")
-        if len(up_tags) >= 2 and curr_p < v60: msg.append(f"✨ 底部轉折：{'/'.join(up_tags)}翻揚"); is_mail = True
+def get_gspread_client():
+    key_data = os.environ.get("GOOGLE_KEY_JSON")
+    creds_dict = json.loads(key_data)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    return gspread.authorize(creds)
 
-        # W底與M頭
-        r_l, r_h = lows.tail(60), highs.tail(60)
-        t_a_v, t_a_i = float(r_l.min()), r_l.idxmin()
-        post_a = r_h.loc[t_a_i:]
-        if len(post_a) > 5:
-            w_peak_v, w_peak_i = float(post_a.max()), post_a.idxmax()
-            post_b = lows.loc[w_peak_i:]
-            if len(post_b) > 3:
-                t_c_v = float(post_b.min())
-                if t_c_v >= (t_a_v * 0.97) and (w_peak_v - t_a_v)/t_a_v >= 0.10:
-                    st_w = "✨ W底突破" if curr_p > w_peak_v else "✨ W底機會"
-                    msg.append(f"{st_w}: 中間峰值({w_peak_v:.1f}) 距領口{((w_peak_v-curr_p)/w_peak_v)*100:.1f}%"); is_mail = True
+def force_float(v):
+    if v is None or str(v).strip() == "": return 0.0
+    s = str(v).strip().replace(',', '')
+    if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
+    try: return float(s)
+    except: return 0.0
 
-        if t in ["2408", "2344"] and curr_p > v60:
-            m_pk_a_v, m_pk_a_i = float(r_h.max()), r_h.idxmax()
-            post_pk_a = r_l.loc[m_pk_a_i:]
-            if len(post_pk_a) > 5:
-                m_trough_v, m_trough_i = float(post_pk_a.min()), post_pk_a.idxmin()
-                post_tr = r_h.loc[m_trough_i:]
-                if len(post_tr) > 3:
-                    m_pk_b_v = float(post_tr.max())
-                    if abs(m_pk_a_v - m_pk_b_v)/m_pk_a_v < 0.05:
-                        msg.append(f"⚠️ M頭警示: 中間谷底價({m_trough_v:.1f}) 提防跌破頸線"); is_mail = True
-
-        # 壓力標記
-        p_high_20 = float(highs.tail(20).max())
-        if curr_p < v240:
-            msg.append(f"❄️ 空方反彈中: 壓力240SMA({v240:.1f})")
-        elif not any("底" in s or "頭" in s for s in msg):
-            msg.append(f"🌊 多方行進: 近期壓力高點({p_high_20:.1f})")
-
-        return " | ".join(msg), curr_p, v60, bias, is_mail
-    except: return "分析錯誤", 0, 0, 0, False
-
-# --- 3. UI 介面 ---
-st.title("📈 股市戰略指揮中心")
-with st.sidebar:
-    st.header("權限驗證")
-    email_in = st.text_input("Email", value="joywu4093@gmail.com").strip()
-    if st.button("🔄 讀取雲端清單"):
-        try:
-            scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_info(json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]), scopes=scope)
-            sheet = gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
-            user = next((r for r in sheet.get_all_records() if r['Email'] == email_in), None)
-            if user: st.session_state["stocks"] = str(user['Stock_List'])
-        except: st.error("雲端讀取失敗")
-    ticker_input = st.text_area("自選股清單", value=st.session_state.get("stocks", ""), height=300)
-    submit_btn = st.button("🚀 執行全戰略分析")
-
-if submit_btn:
-    # 💡 修正正則表達式，允許抓取 4 位數字 或 ^TWII
-    tickers = [t.upper() for t in re.findall(r'\d{4}|\^TWII', ticker_input, re.IGNORECASE)]
-    st.session_state["stocks"] = ", ".join(tickers)
-    st.info(f"📋 本次偵察分析共計：{len(tickers)} 檔個股")
+def fetch_and_update():
+    headers = {'User-Agent': 'Mozilla/5.0'}
     
-    notify_list = [f"✅ 網頁指揮中心即時分析！測試時間：{datetime.now().strftime('%H:%M:%S')}"]
-    has_mail_alerts = False
-
+    url_twse = "https://openapi.twse.com.tw/v1/opendata/t187ap14_L"
+    url_tpex = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O"
+    
     try:
-        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_info(json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]), scopes=scope)
-        sheet = gspread.authorize(creds).open_by_key("1EBW0MMPovmYJ8gi6KZJRchnZb9sPNwr-_jVG_qoXncU").sheet1
-        cell = sheet.find(email_in)
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        sheet.update_cell(cell.row, cell.col + 1, ", ".join(tickers))
-        sheet.update_cell(cell.row, cell.col + 2, now_str)
-        st.success(f"✅ 雲端同步完成 ({now_str})")
-    except: st.warning("雲端同步失敗")
+        print("📡 下載最新【綜合損益表】...")
+        res_twse = requests.get(url_twse, headers=headers, verify=False, timeout=30).json()
+        res_tpex = requests.get(url_tpex, headers=headers, verify=False, timeout=30).json()
+        all_detail = res_twse + res_tpex
+    except Exception as e: 
+        print(f"❌ API 抓取失敗: {e}")
+        return
 
-    for t in tickers:
-        # 💡 針對大盤 ^TWII 不加 .TW，其他台股加 .TW
-        if t == "^TWII":
-            df = yf.download("^TWII", period="2y", progress=False)
-        else:
-            df = yf.download(f"{t}.TW", period="2y", progress=False)
-            if df.empty: df = yf.download(f"{t}.TWO", period="2y", progress=False)
+    stats = {}
+    for item in all_detail:
+        code = str(item.get('公司代號')).strip()
+        y = str(item.get('年度'))
+        q = str(item.get('季別'))
+        
+        # 鎖定 114 年 第 4 季
+        if y == "114" and q == "4":
+            revenue = 0.0
+            op_profit = 0.0
+            non_op_income = 0.0
+            annual_eps = 0.0
             
-        if not df.empty:
-            sig, p, s60, b, im = analyze_strategy(df, t)
-            with st.container(border=True):
-                st.markdown(f"#### {STOCK_NAMES.get(t, t)} {t} - ${p:.2f} 乖離 {b:.1f}%")
-                st.write(sig)
-            if im:
-                notify_list.append(f"【{STOCK_NAMES.get(t, t)}】${p:.2f} | {sig}")
-                has_mail_alerts = True
+            # 🌟 V193 關鍵 1：用關鍵字掃描，無視政府全形半形括號陷阱！不怕讀不到數字！
+            for k, v in item.items():
+                if '營業收入' in k: revenue = force_float(v)
+                elif '營業利益' in k: op_profit = force_float(v)
+                elif '營業外收入' in k: non_op_income = force_float(v)
+                elif '每股盈餘' in k: annual_eps = force_float(v)
 
-    if has_mail_alerts:
-        try:
-            sender, pwd = st.secrets["GMAIL_USER"], st.secrets["GMAIL_PASSWORD"]
-            msg = MIMEText("\n\n".join(notify_list))
-            msg['Subject'] = f"📈 網頁指揮中心即時回報 - {datetime.now().strftime('%m/%d %H:%M')}"
-            msg['From'], msg['To'] = sender, email_in
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                server.login(sender, pwd)
-                server.send_message(msg)
-            st.success(f"📧 警示信件已成功即時寄送至 {email_in}！")
-        except Exception as e: st.error(f"❌ 寄信失敗: {e}")
+            stats[code] = {
+                "annual_eps": annual_eps, 
+                "revenue": revenue,
+                "op_profit": op_profit,
+                "non_op_income": non_op_income
+            }
+
+    print(f"✅ 成功獲取 114年 Q4 資料，共 {len(stats)} 檔股票準備寫入！\n")
+
+    client = get_gspread_client()
+    spreadsheet = client.open_by_url(MASTER_GSHEET_URL)
+    
+    for ws in spreadsheet.worksheets():
+        if not any(n in ws.title for n in ["個股總表", "金融股"]): continue
+        data = ws.get_all_values()
+        if not data: continue
+        
+        h = data[0]
+        i_c = next((i for i, x in enumerate(h) if "代號" in x), -1)
+        
+        # 尋找計算用的前三季
+        i_q1 = next((i for i, x in enumerate(h) if "25Q1" in str(x).upper()), -1)
+        i_q2 = next((i for i, x in enumerate(h) if "25Q2" in str(x).upper()), -1)
+        i_q3 = next((i for i, x in enumerate(h) if "25Q3" in str(x).upper()), -1)
+        
+        # 🌟 V193 關鍵 2：完全依照您的「四大標準表頭」精準定位！
+        i_op_m_target = next((i for i, x in enumerate(h) if "最新單季營益率" in str(x)), -1)
+        i_q4_target = next((i for i, x in enumerate(h) if "25Q4單季每股盈餘" in str(x)), -1)
+        i_accum_eps_target = next((i for i, x in enumerate(h) if "最新累季每股盈餘" in str(x)), -1)
+        i_nop_target = next((i for i, x in enumerate(h) if "最新單季業外損益佔稅前淨利" in str(x)), -1)
+        
+        if i_c == -1: continue
+
+        cells = []
+        for r_idx, row in enumerate(data[1:], start=2):
+            code = row[i_c].split('.')[0].strip()
+            
+            # 只針對有資料的股票進行計算
+            if code in stats:
+                d = stats[code]
+                
+                # 1. 填入 累計 EPS
+                if i_accum_eps_target != -1:
+                    cells.append(gspread.Cell(row=r_idx, col=i_accum_eps_target+1, value=d["annual_eps"]))
+
+                # 2. 填入 Q4 EPS (累計 - 前三季)
+                if i_q4_target != -1:
+                    q1_eps = force_float(row[i_q1]) if i_q1 != -1 and i_q1 < len(row) else 0.0
+                    q2_eps = force_float(row[i_q2]) if i_q2 != -1 and i_q2 < len(row) else 0.0
+                    q3_eps = force_float(row[i_q3]) if i_q3 != -1 and i_q3 < len(row) else 0.0
+                    q4_eps_calculated = round(d["annual_eps"] - q1_eps - q2_eps - q3_eps, 2)
+                    cells.append(gspread.Cell(row=r_idx, col=i_q4_target+1, value=q4_eps_calculated))
+                
+                # 3. 填入 單季營益率%
+                if d["revenue"] != 0 and i_op_m_target != -1:
+                    op_margin = round((d["op_profit"] / d["revenue"]) * 100, 2)
+                    cells.append(gspread.Cell(row=r_idx, col=i_op_m_target+1, value=op_margin))
+                    
+                # 4. 填入 業外損益佔稅前淨利% 
+                # (稅前淨利 = 營業利益 + 業外收入及支出)
+                pre_tax_profit = d["non_op_income"] + d["op_profit"]
+                if pre_tax_profit != 0 and i_nop_target != -1:
+                    non_op_ratio = round((d["non_op_income"] / pre_tax_profit) * 100, 2)
+                    cells.append(gspread.Cell(row=r_idx, col=i_nop_target+1, value=non_op_ratio))
+        
+        if cells:
+            ws.update_cells(cells, value_input_option='USER_ENTERED')
+            print(f"📊 {ws.title} 更新完成。寫入了 {len(cells)} 個儲存格。")
+
+if __name__ == "__main__":
+    fetch_and_update()
