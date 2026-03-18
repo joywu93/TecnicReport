@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： V01_20260317.py (主網頁程式 - V01 版)
-# 💡 更新內容： 基於 V182.txt 原檔
+# 📂 檔案名稱： Fundamental_2026.py (主網頁程式 - V01 版)
+# 💡 更新內容： 新增精準配息率邏輯、恢復圖表互動、更新策略備註
 # ==========================================
 
 import streamlit as st
@@ -25,7 +25,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ==========================================
 # 網頁基本設定 & 響應式 CSS 
 # ==========================================
-st.set_page_config(page_title="2026 戰略指揮", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="2026 戰略指揮 (V01版)", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
@@ -136,7 +136,18 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     est_full_year_eps = est_total_rev * profit_margin_factor
     
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
-    calc_payout_ratio = 90 if recent_payout_ratio >= 100 else (50 if recent_payout_ratio <= 0 else recent_payout_ratio)
+    
+    # 🌟 新版配息率強效防守邏輯
+    if acc_eps > 0 and declared_div > 0:
+        calc_payout_ratio = (declared_div / acc_eps) * 100
+    else:
+        calc_payout_ratio = recent_payout_ratio
+        
+    if calc_payout_ratio >= 100:
+        calc_payout_ratio = 90.0
+    elif calc_payout_ratio <= 0:
+        calc_payout_ratio = 50.0
+        
     est_annual_dividend = est_full_year_eps * (calc_payout_ratio / 100)
     forward_yield = (max(declared_div, est_annual_dividend) / current_price) * 100 if current_price > 0 else 0
 
@@ -178,7 +189,20 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
         
     current_price = float(data["price"]) if data["price"] else 0.0
     est_per = current_price / est_fy_eps if est_fy_eps > 0 else 0
-    payout_ratio = 90 if data["payout"] > 100 else (data["payout"] if data["payout"] > 0 else 50)
+    
+    # 🌟 新版配息率強效防守邏輯 (金融股)
+    f_acc_eps = data.get("acc_eps", 0)
+    f_declared_div = data.get("declared_div", 0)
+    if f_acc_eps > 0 and f_declared_div > 0:
+        payout_ratio = (f_declared_div / f_acc_eps) * 100
+    else:
+        payout_ratio = data.get("payout", 0)
+        
+    if payout_ratio >= 100:
+        payout_ratio = 90.0
+    elif payout_ratio <= 0:
+        payout_ratio = 50.0
+        
     est_dividend = est_fy_eps * (payout_ratio / 100)
     
     forward_yield = (max(data.get("declared_div", 0), est_dividend) / current_price) * 100 if current_price > 0 else 0
@@ -560,12 +584,12 @@ if cached_data:
                                 safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
                                 
                                 st.markdown(
-                                    f"**股價 {safe_price:.2f}元** ｜ "
-                                    f"前瞻殖利率 **{safe_yield:.2f}%**<br>"
-                                    f"PER **{safe_per:.2f}** ｜ "
-                                    f"EPS **{safe_eps:.2f}元** ｜ "
-                                    f"成長率 **{safe_grow:.2f}%** ｜ "
-                                    f"📈 合約負債 **{liab_value:.2f}億 ({liab_qoq:.2f}%)**",
+                                    f"股價 {safe_price:.2f}元 ｜ "
+                                    f"前瞻殖利率 {safe_yield:.2f}%<br>"
+                                    f"PER {safe_per:.2f} ｜ "
+                                    f"EPS {safe_eps:.2f}元 ｜ "
+                                    f"成長率 {safe_grow:.2f}% ｜ "
+                                    f"📈 合約負債 {liab_value:.2f}億 ({liab_qoq:.2f}%)",
                                     unsafe_allow_html=True
                                 )
                                 if is_admin:
@@ -599,6 +623,7 @@ if cached_data:
                                     
                                 d_viz.append({"季度": q, "類別": "C.預估", "項目": "預估標竿", "營收(億)": clean_val_list(row.get("_total_est_qs", [0,0,0,0]), i)})
                                 
+                            # 🌟 恢復圖表觸碰與顯示互動數據！
                             bars = alt.Chart(pd.DataFrame(d_viz)).mark_bar().encode(
                                 x=alt.X('類別:N', axis=None), 
                                 y=alt.Y('營收(億):Q', title=None), 
@@ -606,7 +631,7 @@ if cached_data:
                                                 scale=alt.Scale(domain=["去年實際", "1月營收", "2月營收", "3月營收", "已公布", "預估標竿"], 
                                                                 range=["#004c6d", "#cce6ff", "#66b2ff", "#0073e6", "#3399ff", "#ff4b4b"])),
                                 order=alt.Order('項目:N', sort='ascending'),
-                                tooltip=alt.value(None),
+                                tooltip=[alt.Tooltip('項目:N', title='類別'), alt.Tooltip('營收(億):Q', title='營收(億)', format='.2f')],
                                 column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
                             ).properties(width=55, height=180)
                             st.altair_chart(bars, use_container_width=False) 
@@ -624,9 +649,10 @@ if cached_data:
     if t_radar:
         with t_radar:
             st.markdown("##### 🚀 成長動能條件")
-            s1 = st.checkbox("☑️ 策略一：年底升溫")
-            s2 = st.checkbox("☑️ 策略二：淡季突破")
-            s3 = st.checkbox("☑️ 策略三：Q2大爆發")
+            # 🌟 新增各項策略背後的計算備註說明
+            s1 = st.checkbox("☑️ 策略一：年底升溫 (年底11-12月營收均值 > 去年Q1均營收)")
+            s2 = st.checkbox("☑️ 策略二：淡季突破 (預估今年Q1總營收 > 去年Q2總營收)")
+            s3 = st.checkbox("☑️ 策略三：Q2大爆發 (預估今年Q2超越Q1，且大於去年Q2)")
             c_r1, c_r2 = st.columns(2)
             with c_r1:
                 f_grow = st.slider("穩健成長 (年增率 > %)", -10, 100, 10)
@@ -637,7 +663,6 @@ if cached_data:
             
             if st.button("📡 全市場掃描", type="primary"):
                 with st.spinner("掃描中..."):
-                    # 🌟 補回 V182 遺漏的阻擋名單！
                     exclude_codes = {
                         '1316', '1436', '1438', '1439', '1442', '1453', '1456', '1472', '1805', '1808', '2442', '2501', '2504', '2505', '2506', '2509', '2511', '2515', '2516', '2520', '2524', '2527', '2528', '2530', '2534', '2535', '2536', '2537', '2538', '2539', '2540', '2542', '2543', '2545', '2546', '2547', '2548', '2596', '2597', '2718', '2923', '3052', '3056', '3188', '3266', '3489', '3512', '3521', '3703', '4113', '4416', '4907', '5206', '5213', '5324', '5455', '5508', '5511', '5512', '5514', '5515', '5516', '5519', '5520', '5521', '5522', '5523', '5525', '5529', '5531', '5533', '5534', '5543', '5546', '5547', '5548', '6171', '6177', '6186', '6198', '6212', '6219', '6264', '8080', '8424', '9906', '9946',
                         '2880', '2881', '2882', '2883', '2884', '2885', '2886', '2887', '2889', '2890', '2891', '2892', '5880', '2816', '2832', '2850', '2851', '2852', '2867', '5878', '2801', '2812', '2820', '2834', '2836', '2838', '2845', '2849', '2897', '5876',
@@ -647,7 +672,6 @@ if cached_data:
                     kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
                     res_list = []
                     for code, d in db_gen.items():
-                        # 🌟 補回判斷式：只要是在阻擋名單內的代號，直接跳過不顯示！
                         if code in exclude_codes: continue
                         if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
                         
