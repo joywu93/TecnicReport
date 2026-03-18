@@ -549,4 +549,177 @@ if cached_data:
     if is_admin:
         t_vip, t_radar, t_fin = st.tabs(["🎯 專屬戰略指揮", "🔍 成長戰略雷達", "🏦 金融存股雷達"])
     else:
-        t_vip, t_fin = st.tabs(["🎯 專屬
+        t_vip, t_fin = st.tabs(["🎯 專屬戰略指揮", "🏦 金融存股雷達"])
+        t_radar = None
+    
+    with t_vip:
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if st.button("🚀 執行戰略分析", type="primary", use_container_width=True):
+                vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
+                bar = st.progress(0, "獲取報價...")
+                res_list, found = [], 0
+                for i, code in enumerate(vips):
+                    d = db_gen.get(code) or db_fin.get(code)
+                    if d:
+                        found += 1
+                        bar.progress((i+1)/len(vips), f"分析: {code}")
+                        pr = get_realtime_price(code, d["price"])
+                        res_list.append(auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), pr, d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0)))
+                bar.empty()
+                if not found: st.warning("未找到股票")
+                elif res_list: st.session_state["df_vip"] = pd.DataFrame(res_list)
+        
+        if "df_vip" in st.session_state:
+            df = st.session_state["df_vip"]
+            if df is not None and not df.empty:
+                valid_df = df[df["股票名稱"].astype(bool) & df["股票名稱"].notna() & (df["股票名稱"] != "")]
+                opts = sorted([str(x) for x in valid_df["股票名稱"].unique() if str(x).strip()])
+                vips = list(dict.fromkeys([c.strip() for c in re.split(r'[;,\s\t]+', watch_list_input) if c.strip()]))
+                
+                d_idx = 0
+                if vips and opts:
+                    try: d_idx = next((i for i, o in enumerate(opts) if str(o).startswith(vips[0])), 0)
+                    except: pass
+                
+                with c1:
+                    sel = st.selectbox("📌 搜尋關注個股：", opts, index=d_idx) if opts else None
+                    if sel:
+                        row_df = df[df["股票名稱"] == sel].copy()
+                        
+                        try:
+                            row_list = row_df.to_dict('records')
+                        except Exception:
+                            row_list = []
+                            
+                        if row_list: 
+                            try:
+                                row = row_list[0] 
+                                
+                                def get_safe_float(val):
+                                    if val is None: return 0.0
+                                    if isinstance(val, (str, int, float)):
+                                        try: return float(str(val).replace(',', '').replace('%', ''))
+                                        except: return 0.0
+                                    return 0.0
+                                    
+                                liab_value = get_safe_float(row.get('最新季度流動合約負債(億)', 0)) 
+                                liab_qoq = get_safe_float(row.get('最新季度流動合約負債季增(%)', 0))
+                                safe_price = get_safe_float(row.get('最新股價', 0))
+                                safe_yield = get_safe_float(row.get('前瞻殖利率(%)', 0))
+                                safe_per = get_safe_float(row.get('本益比(PER)', 0))
+                                safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
+                                safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
+                                
+                                st.markdown(
+                                    f"股價 {safe_price:.2f}元 ｜ "
+                                    f"前瞻殖利率 {safe_yield:.2f}%<br>"
+                                    f"PER {safe_per:.2f} ｜ "
+                                    f"EPS {safe_eps:.2f}元 ｜ "
+                                    f"成長率 {safe_grow:.2f}% ｜ "
+                                    f"📈 合約負債 {liab_value:.2f}億 ({liab_qoq:.2f}%)",
+                                    unsafe_allow_html=True
+                                )
+                                if is_admin:
+                                    with st.expander("📝 點此查看預估邏輯"):
+                                        st.write(str(row.get('_logic_note', '無紀錄')))
+                            except Exception: pass
+                
+                with c2:
+                    if sel and row_list: 
+                        try:
+                            d_viz = []
+                            for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
+                                def clean_val_list(lst, idx):
+                                    try:
+                                        if not isinstance(lst, list): return 0.0
+                                        v = lst[idx]
+                                        fv = float(v)
+                                        return fv if not math.isnan(fv) and not math.isinf(fv) else 0.0
+                                    except: return 0.0
+                                    
+                                d_viz.append({"季度": q, "類別": "A.去年", "項目": "去年實際", "營收(億)": clean_val_list(row.get("_ly_qs", [0,0,0,0]), i)})
+                                
+                                if q == "Q1":
+                                    m_revs = [clean_val_list(row.get("_known_q1_months", [0,0,0]), x) for x in range(3)]
+                                    if m_revs[0] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "1月營收", "營收(億)": m_revs[0]})
+                                    if m_revs[1] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "2月營收", "營收(億)": m_revs[1]})
+                                    if m_revs[2] > 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "3月營收", "營收(億)": m_revs[2]})
+                                    if sum(m_revs) == 0: d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": 0}) 
+                                else:
+                                    d_viz.append({"季度": q, "類別": "B.今年", "項目": "已公布", "營收(億)": clean_val_list(row.get("_known_qs", [0,0,0,0]), i)})
+                                    
+                                d_viz.append({"季度": q, "類別": "C.預估", "項目": "預估標竿", "營收(億)": clean_val_list(row.get("_total_est_qs", [0,0,0,0]), i)})
+                                
+                            bars = alt.Chart(pd.DataFrame(d_viz)).mark_bar().encode(
+                                x=alt.X('類別:N', axis=None), 
+                                y=alt.Y('營收(億):Q', title=None), 
+                                color=alt.Color('項目:N', legend=alt.Legend(title=None, orient="bottom"), 
+                                                scale=alt.Scale(domain=["去年實際", "1月營收", "2月營收", "3月營收", "已公布", "預估標竿"], 
+                                                                range=["#004c6d", "#cce6ff", "#66b2ff", "#0073e6", "#3399ff", "#ff4b4b"])),
+                                order=alt.Order('項目:N', sort='ascending'),
+                                tooltip=[alt.Tooltip('項目:N', title='類別'), alt.Tooltip('營收(億):Q', title='營收(億)', format='.2f')],
+                                column=alt.Column('季度:N', header=alt.Header(title=None, labelOrient='bottom'))
+                            ).properties(width=55, height=180)
+                            st.altair_chart(bars, use_container_width=False) 
+                        except: pass
+
+                st.divider()
+                if sel and not row_df.empty:
+                    st.markdown(f"### 🎯 【{sel}】專屬戰情報表")
+                    render_dataframe(row_df, is_single=True)
+                    st.divider()
+                
+                st.markdown("### 📋 關注清單總表")
+                render_dataframe(df.sort_values(by=['季成長率(YoY)%', '前瞻殖利率(%)'], ascending=[False, False]))
+
+    if t_radar:
+        with t_radar:
+            st.markdown("##### 🚀 成長動能條件")
+            s1 = st.checkbox("☑️ 策略一：年底升溫 (年底11-12月營收均值 > 去年Q1均營收)")
+            s2 = st.checkbox("☑️ 策略二：淡季突破 (預估今年Q1總營收 > 去年Q2總營收)")
+            s3 = st.checkbox("☑️ 策略三：Q2大爆發 (預估今年Q2超越Q1，且大於去年Q2)")
+            c_r1, c_r2 = st.columns(2)
+            with c_r1:
+                f_grow = st.slider("穩健成長 (年增率 > %)", -10, 100, 10)
+                f_per = st.slider("便宜價 (本益比 <)", 5, 50, 50)
+            with c_r2: f_y = st.slider("高殖利率 (大於 %)", 0.0, 15.0, 4.0)
+            
+            ex_kws = st.text_input("🚫 排除關鍵字 (如: KY, 航運)")
+            
+            if st.button("📡 全市場掃描", type="primary"):
+                with st.spinner("掃描中..."):
+                    exclude_codes = {
+                        '1316', '1436', '1438', '1439', '1442', '1453', '1456', '1472', '1805', '1808', '2442', '2501', '2504', '2505', '2506', '2509', '2511', '2515', '2516', '2520', '2524', '2527', '2528', '2530', '2534', '2535', '2536', '2537', '2538', '2539', '2540', '2542', '2543', '2545', '2546', '2547', '2548', '2596', '2597', '2718', '2923', '3052', '3056', '3188', '3266', '3489', '3512', '3521', '3703', '4113', '4416', '4907', '5206', '5213', '5324', '5455', '5508', '5511', '5512', '5514', '5515', '5516', '5519', '5520', '5521', '5522', '5523', '5525', '5529', '5531', '5533', '5534', '5543', '5546', '5547', '5548', '6171', '6177', '6186', '6198', '6212', '6219', '6264', '8080', '8424', '9906', '9946',
+                        '2880', '2881', '2882', '2883', '2884', '2885', '2886', '2887', '2889', '2890', '2891', '2892', '5880', '2816', '2832', '2850', '2851', '2852', '2867', '5878', '2801', '2812', '2820', '2834', '2836', '2838', '2845', '2849', '2897', '5876',
+                        '6016', '6020', '2855', '6015', '6005', '6026', '6024', '6023', '6021', '5864'
+                    }
+                    
+                    kws = [k.strip() for k in re.split(r'[;,\s\t]+', ex_kws) if k.strip()]
+                    res_list = []
+                    for code, d in db_gen.items():
+                        if code in exclude_codes: continue
+                        if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
+                        
+                        r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0))
+                        
+                        ly_q1_avg, ly_q2 = r["_ly_qs"][0]/3, r["_ly_qs"][1]
+                        ly_11_12_avg = r["_total_est_qs"][0]/3 
+                        est_q1 = r["當季預估均營收"] * 3
+                        est_q2, est_q2_avg = r["_total_est_qs"][1], r["_total_est_qs"][1]/3
+                        best_q1_avg = (r["_known_qs"][0] if simulated_month >= 4 else est_q1)/3
+
+                        if s1 and not (ly_11_12_avg > ly_q1_avg): continue
+                        if s2 and not (est_q1 > ly_q2): continue
+                        if s3 and not (est_q2_avg >= best_q1_avg and est_q2 > ly_q2): continue
+                        if r["預估年成長率(%)"] < f_grow or (f_y > 0 and r["前瞻殖利率(%)"] < f_y) or (f_per < 50 and (r["本益比(PER)"] <= 0 or r["本益比(PER)"] > f_per)): continue
+                        res_list.append(r)
+                    if not res_list: st.warning("無符合條件股票")
+                    else: st.success(f"命中 {len(res_list)} 檔！"); render_dataframe(pd.DataFrame(res_list).sort_values(by=['前瞻殖利率(%)', '季成長率(YoY)%'], ascending=[False, False]))
+
+    with t_fin:
+        if st.button("🛡️ 啟推金融掃描", type="primary"):
+            with st.spinner("篩選中..."):
+                res_list = [financial_strategic_model(d["name"], c.strip(), simulated_month, d, simulated_month) for c, d in db_fin.items() if d.get("pbr",0) > 0]
+                if not res_list: st.warning("無符合條件的金融股")
+                else: render_dataframe(pd.DataFrame(res_list).sort_values(by=['PBR(股價淨值比)', '前瞻殖利率(%)', '連續配息次數'], ascending=[True, False, False]), is_finance=True)
