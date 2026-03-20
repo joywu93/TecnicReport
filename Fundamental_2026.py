@@ -1,6 +1,6 @@
 # ==========================================
 # 📂 檔案名稱： Fundamental_2026.py (主網頁程式 - V01 版)
-# 💡 更新內容： 新增「配息基準」狀態標示欄位，修復季成長率/年成長率低估 Bug
+# 💡 更新內容： 修復「盤後股價更新」默默當機的 Bug，加入防護罩
 # ==========================================
 
 import streamlit as st
@@ -115,19 +115,18 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
 
     base_11_12_avg = (rev_last_11 + rev_last_12) / 2
     
-    # 🌟 【重大修正區塊】：強制 est_q1_rev 必須使用最新的動態真實營收！解決季成長率與年成長率低估問題
     if current_month <= 1: 
         dynamic_base_avg, formula_note = base_11_12_avg, "推演1月(全未知)"
-        est_q1_rev = (base_11_12_avg * 3) * ratio_q1 # 只有在全未知時，才依賴去年Q4與歷史轉換率
+        est_q1_rev = (base_11_12_avg * 3) * ratio_q1 
     elif current_month == 2: 
         dynamic_base_avg, formula_note = sim_rev_1 * 0.9 if sim_rev_1 > 0 else base_11_12_avg, "推演2月(知1月)"
-        est_q1_rev = dynamic_base_avg * 3  # ✅ 乘上最新動態均值
+        est_q1_rev = dynamic_base_avg * 3  
     elif current_month == 3: 
         dynamic_base_avg, formula_note = (sim_rev_1 * 2 + sim_rev_2) / 3 if sim_rev_2 > 0 else sim_rev_1, "推演3月(知1,2月)"
-        est_q1_rev = dynamic_base_avg * 3  # ✅ 完美對應您手算的精準數字
+        est_q1_rev = dynamic_base_avg * 3  
     else: 
         dynamic_base_avg, formula_note = (sim_rev_1 + sim_rev_2 + sim_rev_3) / 3, "推演4月+"
-        est_q1_rev = dynamic_base_avg * 3  # ✅ 乘上最新動態均值
+        est_q1_rev = dynamic_base_avg * 3  
 
     est_q2_rev = est_q1_rev
     est_q3_rev = est_q2_rev * ratio_q3
@@ -145,7 +144,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     est_full_year_eps = est_total_rev * profit_margin_factor
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
     
-    # 🌟 新版配息率強效防守邏輯 + 備註機制
     payout_note = ""
     if acc_eps > 0 and declared_div > 0:
         raw_payout = (declared_div / acc_eps) * 100
@@ -212,7 +210,6 @@ def financial_strategic_model(name, code, current_month, data, simulated_month):
     current_price = float(data["price"]) if data["price"] else 0.0
     est_per = current_price / est_fy_eps if est_fy_eps > 0 else 0
     
-    # 🌟 新版配息率強效防守邏輯 + 備註機制 (金融股)
     f_acc_eps = data.get("acc_eps", 0)
     f_declared_div = data.get("declared_div", 0)
     payout_note = ""
@@ -411,8 +408,9 @@ if is_admin:
                         c_idx = next((i for i, h in enumerate(data[0]) if "代號" in h), -1)
                         p_idx = next((i for i, h in enumerate(data[0]) if "成交" in h and "量" not in h), -1)
                         if c_idx != -1 and p_idx != -1:
-                            cells = [gspread.Cell(row=r+1, col=p_idx+1, value=price_dict[code]) for r, row in enumerate(data) if r > 0 and (code := str(row[c_idx]).split('.')[0].strip()) in price_dict]
-                            if cells: ws.update_cells(cells);
+                            # 🌟 重大修復：加上 str() 保護，避免 Protobuf 當機！
+                            cells = [gspread.Cell(row=r+1, col=p_idx+1, value=str(price_dict[code])) for r, row in enumerate(data) if r > 0 and (code := str(row[c_idx]).split('.')[0].strip()) in price_dict]
+                            if cells: ws.update_cells(cells, value_input_option='USER_ENTERED')
                             cnt += len(cells)
                     status.update(label=f"🎉 成功更新 {cnt} 檔！", state="complete")
                     st.cache_data.clear()
@@ -477,7 +475,7 @@ if is_admin:
                                 if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{tm_h}單月營收月增(%)"))
                                 if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{tm_h}單月營收年增(%)"))
                                 if cells_to_update:
-                                    ws.update_cells(cells_to_update)
+                                    ws.update_cells(cells_to_update, value_input_option='USER_ENTERED')
                                     cnt += 1
                                     
                         if cnt > 0:
