@@ -1,6 +1,6 @@
 # ==========================================
 # 📂 檔案名稱： Fundamental_2026.py (主網頁程式 - V01 版)
-# 💡 更新內容： 延長官方 API 連線等待時間(30秒)，並顯示詳細連線進度
+# 💡 更新內容： 修復盤後股價遇到無交易量橫槓「-」導致當機的 Bug
 # ==========================================
 
 import streamlit as st
@@ -387,7 +387,6 @@ if is_admin:
             try:
                 headers = {'User-Agent': 'Mozilla/5.0'}
                 
-                # 🌟 延長連線等待時間為 30 秒，並加入個別錯誤攔截，避免一顆老鼠屎壞了一鍋粥
                 status.update(label="正在連線台灣證交所(上市)...", state="running")
                 try: 
                     res_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, verify=False, timeout=30).json()
@@ -402,13 +401,26 @@ if is_admin:
                     res_tpex = []
                     st.warning(f"⚠️ 櫃買中心(上櫃)連線超時，略過更新。錯誤: {e}")
 
+                # 🛡️ 股價專屬防護罩：遇到 '-' 或 '---' 聰明過濾，不再當機！
+                def safe_parse_price(val):
+                    try:
+                        s = str(val).replace(',', '').strip()
+                        if not s or s == '-' or s == '--' or s == '---': return None
+                        return float(s)
+                    except: return None
+
                 price_dict = {}
                 if isinstance(res_twse, list):
-                    price_dict.update({str(i.get('Code', '')).strip(): float(i.get('ClosingPrice', '0').replace(',', '')) for i in res_twse if i.get('ClosingPrice')})
+                    for i in res_twse:
+                        cp = safe_parse_price(i.get('ClosingPrice'))
+                        if cp is not None: price_dict[str(i.get('Code', '')).strip()] = cp
+                        
                 if isinstance(res_tpex, list):
-                    price_dict.update({str(i.get('SecuritiesCompanyCode', '')).strip(): float(i.get('Close', '0').replace(',', '')) for i in res_tpex if i.get('Close')})
+                    for i in res_tpex:
+                        cp = safe_parse_price(i.get('Close'))
+                        if cp is not None: price_dict[str(i.get('SecuritiesCompanyCode', '')).strip()] = cp
                 
-                st.write(f"📡 成功獲取 **{len(price_dict)}** 檔最新報價，準備寫入表單...")
+                st.write(f"📡 成功從官方獲取 **{len(price_dict)}** 檔最新有效報價，準備寫入表單...")
 
                 if not price_dict: 
                     status.update(label="⚠️ 無法取得報價 (API皆無回應)。", state="error")
@@ -428,6 +440,7 @@ if is_admin:
                             if c_name in ["成交", "股價", "最新股價", "收盤價"]: p_idx = i
                         
                         if c_idx != -1 and p_idx != -1:
+                            st.write(f"🔍 分頁 **[{ws.title}]** 定位成功！代號在第 **{c_idx+1}** 欄，股價寫入第 **{p_idx+1}** 欄")
                             cells = []
                             for r_idx, row in enumerate(data[1:], start=2):
                                 if c_idx < len(row):
@@ -450,6 +463,7 @@ if is_admin:
     now = datetime.now()
     lm_month, lm_year = (now.month - 1) or 12, now.year if now.month > 1 else now.year - 1
     auto_ym = st.sidebar.text_input("設定營收標題 (如: 26M03)", value=f"{str(lm_year)[-2:]}M{str(lm_month).zfill(2)}")
+    
     if st.sidebar.button("⚡ 2️⃣ 官方月營收更新", type="secondary", use_container_width=True):
         with st.status(f"鎖定目標欄位【{auto_ym}】...", expanded=True) as status:
             try:
@@ -461,19 +475,26 @@ if is_admin:
                     y_roc, q_m = (2000 + int(tm_h[:2])) - 1911, str(int(tm_h[-2:]))
                     df_all_list = []
                     headers = {'User-Agent': 'Mozilla/5.0'}
-                    def cln(val): return v if re.match(r'^-?\d+(\.\d+)?$', (v := str(val).replace(',', '').replace('%', '').strip())) else ""
+                    
+                    def safe_parse_number(val):
+                        try:
+                            s = str(val).replace(',', '').replace('%', '').strip()
+                            if not s or s == '-': return None
+                            return float(s)
+                        except: return None
 
                     urls = [f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{y_roc}_{q_m}_0", f"https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{y_roc}_{q_m}_1", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{y_roc}_{q_m}_0", f"https://mopsov.twse.com.tw/nas/t21/otc/t21sc03_{y_roc}_{q_m}_1"]
                     for u in urls:
                         try:
-                            # 月營收也順便放寬到 15 秒
                             r = requests.get(u+".html", headers=headers, verify=False, timeout=15)
                             if r.status_code == 200:
                                 r.encoding = 'big5' 
                                 for row in re.findall(r'<tr[^>]*>(.*?)</tr>', r.text, flags=re.I|re.S):
                                     cs = [re.sub(r'<[^>]*>', '', c).replace('&nbsp;', '').replace('\u3000', '').strip() for c in re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row, flags=re.I|re.S)]
-                                    if len(cs) >= 7 and (m := re.search(r'(?<!\d)(\d{4})(?!\d)', cs[0])) and cln(cs[2]):
-                                        df_all_list.append({'公司代號': m.group(1), '當月營收': cln(cs[2]), '月增率': cln(cs[5]), '年增率': cln(cs[6]), '來源優先級': 2})
+                                    if len(cs) >= 7 and (m := re.search(r'(?<!\d)(\d{4})(?!\d)', cs[0])):
+                                        rev = safe_parse_number(cs[2])
+                                        if rev is not None:
+                                            df_all_list.append({'公司代號': m.group(1), '當月營收': rev, '月增率': safe_parse_number(cs[5]), '年增率': safe_parse_number(cs[6]), '來源優先級': 2})
                         except: pass
                     
                     if not df_all_list: status.update(label=f"⚠️ 目前尚未公佈 {tm_h} 營收", state="error", expanded=True)
@@ -500,9 +521,9 @@ if is_admin:
                                     code = str(row['公司代號']).strip()
                                     if code in row_map:
                                         row_idx = row_map[code]
-                                        if row['當月營收']: cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(float(row['當月營收']) / 100000, 2)))
-                                        if mom_col_idx != -1 and row['月增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=float(row['月增率'])))
-                                        if yoy_col_idx != -1 and row['年增率']: cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=float(row['年增率'])))
+                                        if pd.notna(row['當月營收']): cells_to_update.append(gspread.Cell(row=row_idx, col=target_col_idx, value=round(row['當月營收'] / 100000, 2)))
+                                        if mom_col_idx != -1 and pd.notna(row['月增率']): cells_to_update.append(gspread.Cell(row=row_idx, col=mom_col_idx, value=row['月增率']))
+                                        if yoy_col_idx != -1 and pd.notna(row['年增率']): cells_to_update.append(gspread.Cell(row=row_idx, col=yoy_col_idx, value=row['年增率']))
                                 
                                 if mom_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=mom_col_idx, value=f"{tm_h}單月營收月增(%)"))
                                 if yoy_col_idx != -1: cells_to_update.append(gspread.Cell(row=1, col=yoy_col_idx, value=f"{tm_h}單月營收年增(%)"))
