@@ -1,6 +1,6 @@
 # ==========================================
-# 📂 檔案名稱： Fundamental_2026.py (主網頁程式 - V01 版)
-# 💡 更新內容： 實裝吳伯伯四大原則 (固定紅色標竿 + A+F 真實EPS滾動推估)
+# 📂 檔案名稱： Fundamental_2026.py (主網頁程式 - V01 脫鉤校準版)
+# 💡 更新內容： 將「固定紅色標竿」與「EPS動態推估」徹底脫鉤！
 # ==========================================
 
 import streamlit as st
@@ -102,7 +102,6 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     elif current_month == 3: sim_rev_1, sim_rev_2, sim_rev_3 = rev_this_1, rev_this_2, 0
     else: sim_rev_1, sim_rev_2, sim_rev_3 = rev_this_1, rev_this_2, rev_this_3
 
-    # 藍色實際柱子的累積值
     actual_known_q1 = sum([v for v in [sim_rev_1, sim_rev_2, sim_rev_3] if v > 0])
     
     ratio_q1 = ly_q1_rev / y1_q4_rev if y1_q4_rev > 0 else 1.0
@@ -113,39 +112,67 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     ratio_q3 = sum_q3_history / sum_q2_history if sum_q2_history > 0 else 1.0
     ratio_q4 = sum_q4_history / sum_q3_history if sum_q3_history > 0 else 1.0
 
-    # 🌟 原則2：紅色預估營收標竿，以11、12月均值*3為基準，全年不變
+    # 🌟 第一軌道：專門算給「紅色標竿直條圖」的營收 (全年鎖死)
     base_11_12_avg = (rev_last_11 + rev_last_12) / 2
-    est_q1_base_total = base_11_12_avg * 3
     
-    est_q1_rev = est_q1_base_total * ratio_q1 
-    est_q2_rev = est_q1_rev
-    est_q3_rev = est_q2_rev * ratio_q3
-    est_q4_rev = est_q3_rev * ratio_q4
+    benchmark_q1_rev = (base_11_12_avg * 3) * ratio_q1 
+    benchmark_q2_rev = benchmark_q1_rev
+    benchmark_q3_rev = benchmark_q2_rev * ratio_q3
+    benchmark_q4_rev = benchmark_q3_rev * ratio_q4
 
-    est_total_rev = est_q1_rev + est_q2_rev + est_q3_rev + est_q4_rev
-    ly_total_rev = (ly_q1_rev + ly_q2_rev + ly_q3_rev + ly_q4_rev)
-    est_annual_yoy = ((est_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
-    q1_yoy = ((est_q1_rev - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
+    # 🌟 第二軌道：專門算給「EPS推估」的動態營收 (隨月份滾動)
+    if current_month <= 1: 
+        dynamic_est_q1_rev = benchmark_q1_rev
+        dynamic_base_avg = base_11_12_avg
+        formula_note = "動態EPS推估 (全未知)"
+    elif current_month == 2: 
+        dynamic_base_avg = sim_rev_1 * 0.9 if sim_rev_1 > 0 else base_11_12_avg
+        dynamic_est_q1_rev = dynamic_base_avg * 3  
+        formula_note = "動態EPS推估 (知1月)"
+    elif current_month == 3: 
+        if sim_rev_2 > 0:
+            dynamic_est_q1_rev = (sim_rev_1 * 2) + sim_rev_2
+            dynamic_base_avg = dynamic_est_q1_rev / 3
+            formula_note = "動態EPS推估 (1月x2+2月)"
+        else:
+            dynamic_base_avg = sim_rev_1
+            dynamic_est_q1_rev = dynamic_base_avg * 3
+            formula_note = "動態EPS推估 (僅知1月)"
+    else: 
+        dynamic_base_avg = (sim_rev_1 + sim_rev_2 + sim_rev_3) / 3
+        dynamic_est_q1_rev = dynamic_base_avg * 3  
+        formula_note = "動態EPS推估 (知Q1)"
 
-    # 🌟 原則4：預估 EPS 邏輯 (近期EPS * (預估營收 / 近期營收)) + A+F 滾動推算
+    # 動態營收推算 Q2~Q4
+    dynamic_est_q2_rev = dynamic_est_q1_rev
+    dynamic_est_q3_rev = dynamic_est_q2_rev * ratio_q3
+    dynamic_est_q4_rev = dynamic_est_q3_rev * ratio_q4
+    dynamic_total_rev = dynamic_est_q1_rev + dynamic_est_q2_rev + dynamic_est_q3_rev + dynamic_est_q4_rev
+
+    # 計算利潤因子 (用營收推EPS)
     base_q_total_rev = base_q_avg_rev * 3 if base_q_avg_rev > 0 else 1.0
     profit_margin_factor = base_q_eps * (1 - (non_op_ratio / 100)) / base_q_total_rev 
 
-    est_q1_eps_forecast = est_q1_rev * profit_margin_factor
-    est_q2_eps_forecast = est_q2_rev * profit_margin_factor
-    est_q3_eps_forecast = est_q3_rev * profit_margin_factor
-    est_q4_eps_forecast = est_q4_rev * profit_margin_factor
+    # 用「動態營收」算出真實的預估 EPS！
+    est_q1_eps_forecast = dynamic_est_q1_rev * profit_margin_factor
+    est_q2_eps_forecast = dynamic_est_q2_rev * profit_margin_factor
+    est_q3_eps_forecast = dynamic_est_q3_rev * profit_margin_factor
+    est_q4_eps_forecast = dynamic_est_q4_rev * profit_margin_factor
 
+    # A+F 滾動推估
     if actual_q1_eps > 0:
         est_q1_eps_display = actual_q1_eps
         est_full_year_eps = actual_q1_eps + est_q2_eps_forecast + est_q3_eps_forecast + est_q4_eps_forecast
-        formula_note = "固定標竿 (A+F真實滾動)"
+        formula_note += " + A+F滾動"
     else:
         est_q1_eps_display = est_q1_eps_forecast
         est_full_year_eps = est_q1_eps_forecast + est_q2_eps_forecast + est_q3_eps_forecast + est_q4_eps_forecast
-        formula_note = "固定標竿 (全預估)"
 
+    # 計算其他數據
     est_per = current_price / est_full_year_eps if est_full_year_eps > 0 else 0
+    q1_yoy = ((dynamic_est_q1_rev - ly_q1_rev) / ly_q1_rev) * 100 if ly_q1_rev > 0 else 0
+    ly_total_rev = (ly_q1_rev + ly_q2_rev + ly_q3_rev + ly_q4_rev)
+    est_annual_yoy = ((dynamic_total_rev - ly_total_rev) / ly_total_rev) * 100 if ly_total_rev > 0 else 0
     
     payout_note = ""
     if acc_eps > 0 and declared_div > 0:
@@ -177,15 +204,17 @@ def auto_strategic_model(name, current_month, rev_last_11, rev_last_12, rev_this
     return {
         "股票名稱": name, "最新股價": round(current_price, 2), 
         "_logic_note": formula_note, "_payout_note": "", 
-        "當季預估均營收": round(base_11_12_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
+        "當季預估均營收": round(dynamic_base_avg, 2), "季成長率(YoY)%": round(q1_yoy, 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "預估今年Q1_EPS": round(est_q1_eps_display, 2), 
         "預估今年度_EPS": round(est_full_year_eps, 2), "最新累季EPS": acc_eps, "本益比(PER)": round(est_per, 2),         
         "預估年成長率(%)": round(est_annual_yoy, 2), "運算配息率(%)": calc_payout_ratio, "配息基準": payout_note,
+        "最新業外佔比(%)": round(non_op_ratio, 2),
         "最新季度流動合約負債(億)": contract_liab, "最新季度流動合約負債季增(%)": contract_liab_qoq,
         "_ly_qs": [round(ly_q1_rev, 2), round(ly_q2_rev, 2), round(ly_q3_rev, 2), round(ly_q4_rev, 2)], 
         "_known_qs": [round(actual_known_q1, 2), 0, 0, 0],
         "_known_q1_months": [round(max(0, sim_rev_1), 2), round(max(0, sim_rev_2), 2), round(max(0, sim_rev_3), 2)],
-        "_total_est_qs": [round(est_q1_rev, 2), round(est_q2_rev, 2), round(est_q3_rev, 2), round(est_q4_rev, 2)]
+        # 🌟 這裡餵給圖表的是「固定紅色標竿」，不隨短線月份起舞！
+        "_total_est_qs": [round(benchmark_q1_rev, 2), round(benchmark_q2_rev, 2), round(benchmark_q3_rev, 2), round(benchmark_q4_rev, 2)]
     }
 
 # ==========================================
@@ -198,14 +227,23 @@ def financial_strategic_model(name, code, current_month, data, simulated_month, 
     elif simulated_month == 3: sim_rev_1, sim_rev_2, sim_rev_3 = rev_this_1, rev_this_2, 0
     else: sim_rev_1, sim_rev_2, sim_rev_3 = rev_this_1, rev_this_2, rev_this_3
 
-    # 金融股同步改為全年鎖死基準
-    fixed_base_avg = (data["rev_last_11"] + data.get("rev_last_12",0)) / 2
+    r_11 = data.get("rev_last_11", 0)
+    r_12 = data.get("rev_last_12", 0)
+    base_11_12_avg = (r_11 + r_12) / 2
 
-    est_q1_eps_forecast = data["base_q_eps"] * (1 - (data.get("non_op", 0) / 100)) * (fixed_base_avg / data["base_q_avg_rev"]) if data["base_q_avg_rev"] > 0 else 0
+    # EPS 用動態滾動推估
+    if simulated_month <= 1: dynamic_base_avg = base_11_12_avg
+    elif simulated_month == 2: dynamic_base_avg = sim_rev_1 * 0.9 if sim_rev_1 > 0 else base_11_12_avg
+    elif simulated_month == 3: 
+        if sim_rev_2 > 0: dynamic_base_avg = (sim_rev_1 * 2 + sim_rev_2) / 3
+        else: dynamic_base_avg = sim_rev_1
+    else: dynamic_base_avg = (sim_rev_1 + sim_rev_2 + sim_rev_3) / 3
+
+    non_op_ratio = data.get("non_op_ratio", 0)
+    est_q1_eps_forecast = data["base_q_eps"] * (1 - (non_op_ratio / 100)) * (dynamic_base_avg / data["base_q_avg_rev"]) if data["base_q_avg_rev"] > 0 else 0
     
     ly_total_eps = data["eps_q1"] + data["eps_q2"] + data["eps_q3"] + data["eps_q4"]
 
-    # 金融股同步實裝 A+F 真實值滾動覆蓋
     if actual_q1_eps > 0:
         est_q1_eps_display = actual_q1_eps
         if data["eps_q1"] > 0 and ly_total_eps > 0:
@@ -259,12 +297,26 @@ def financial_strategic_model(name, code, current_month, data, simulated_month, 
         "股票名稱": f"{code} {data['name']}", "最新股價": round(current_price, 2), "PBR(股價淨值比)": round(data.get("pbr", 0), 2),
         "前瞻殖利率(%)": round(forward_yield, 2), "年化殖利率(%)": round(data.get("annual_yield", 0), 2),
         "前瞻PER": round(est_per, 2), "原始PER": round(data.get("orig_per", 0), 2), "連續配息次數": int(data.get("div_years", 0)),
-        "預估今年Q1_EPS": round(est_q1_eps_display, 2), "預估今年度_EPS": round(est_fy_eps, 2), "運算配息率(%)": payout_ratio, "配息基準": payout_note, "當季預估均營收(億)": round(fixed_base_avg, 2)
+        "預估今年Q1_EPS": round(est_q1_eps_display, 2), "預估今年度_EPS": round(est_fy_eps, 2), "運算配息率(%)": payout_ratio, "配息基準": payout_note, "當季預估均營收(億)": round(dynamic_base_avg, 2), "最新業外佔比(%)": round(non_op_ratio, 2)
     }
 
 # ==========================================
-# 🌟 核心快取大腦 
+# 🌟 核心快取大腦 (防撞過濾)
 # ==========================================
+def deduplicate_cols(cols):
+    seen = {}
+    res = []
+    for c in cols:
+        c_str = str(c).strip()
+        if not c_str: c_str = "未命名欄位"
+        if c_str in seen:
+            seen[c_str] += 1
+            res.append(f"{c_str}_{seen[c_str]}")
+        else:
+            seen[c_str] = 0
+            res.append(c_str)
+    return res
+
 @st.cache_data(ttl=3600, show_spinner="連線至大數據庫...")
 def fetch_gsheet_data_v182():
     try:
@@ -275,14 +327,17 @@ def fetch_gsheet_data_v182():
         fin_dfs = []
         
         for ws in worksheets:
-            if "個股總表" in ws.title:
+            clean_title = ws.title.replace(" ", "")
+            if any(n in clean_title for n in ["當年度表", "歷史表單", "個股總表", "總表"]):
                 data = ws.get_all_values()
                 if data and len(data) > 1:
-                    gen_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
-            elif "金融股" in ws.title:
+                    cols = deduplicate_cols(data[0])
+                    gen_dfs.append(pd.DataFrame(data[1:], columns=cols))
+            elif "金融股" in clean_title:
                 data = ws.get_all_values()
                 if data and len(data) > 1:
-                    fin_dfs.append(pd.DataFrame(data[1:], columns=data[0]))
+                    cols = deduplicate_cols(data[0])
+                    fin_dfs.append(pd.DataFrame(data[1:], columns=cols))
                     
         df_general = pd.concat(gen_dfs, ignore_index=True) if gen_dfs else pd.DataFrame()
         df_finance = pd.concat(fin_dfs, ignore_index=True) if fin_dfs else pd.DataFrame()
@@ -319,27 +374,57 @@ def fetch_gsheet_data_v182():
                         return val
                     except: return d
                  
-                rev_q4 = v(get_col(f"{ly}Q4", "營收", ex=["增", "率", "%"])) or (v(get_col("10單月營收", ex=["增", "%"])) + v(get_col(f"{last_y}M11", "營收", ex=["增", "%"])) + v(get_col(f"{last_y}M12", "營收", ex=["增", "%"])))
+                rev_q4 = v(get_col(f"{ly}Q4", "營收", ex=["增", "率", "%"])) or (v(get_col(f"{last_y}M10", "營收", ex=["增", "率", "%"])) + v(get_col(f"{last_y}M11", "營收", ex=["增", "率", "%"])) + v(get_col(f"{last_y}M12", "營收", ex=["增", "率", "%"])))
                 eps_q3, eps_q4 = v(get_col(f"{ly}Q3", "盈餘")), v(get_col(f"{ly}Q4", "盈餘"))
                 rev_q3 = v(get_col(f"{ly}Q3", "營收", ex=["增", "率", "%"]))
                 base_eps = eps_q4 if eps_q4 != 0 else (eps_q3 * (rev_q4 / rev_q3) if rev_q3 > 0 else eps_q3)
 
-                db[code] = {
+                op_q4 = v(get_col(f"{ly}Q4", "營益", ex=["率", "%", "增", "每股", "佔"]))
+                nop_q4 = v(get_col(f"{ly}Q4", "業外損益", ex=["率", "%", "增", "每股", "佔"]))
+                op_q3 = v(get_col(f"{ly}Q3", "營益", ex=["率", "%", "增", "每股", "佔"]))
+                nop_q3 = v(get_col(f"{ly}Q3", "業外損益", ex=["率", "%", "增", "每股", "佔"]))
+
+                if eps_q4 != 0 or op_q4 != 0 or nop_q4 != 0:
+                    base_op = op_q4
+                    base_nop = nop_q4
+                else:
+                    base_op = op_q3
+                    base_nop = nop_q3
+                    
+                denom = base_op + base_nop
+                non_op_ratio = (base_nop / denom * 100) if denom != 0 else 0.0
+                calc_str = f"{base_nop} / ({base_op} + {base_nop})"
+
+                new_entry = {
                     "name": str(row[c_name]) if c_name else "未知", 
                     "industry": str(row[get_col("產業") or get_col("類別")]).strip() if (get_col("產業") or get_col("類別")) else "未分類",
-                    "rev_last_11": v(get_col(f"{last_y}M11", "營收", ex=["增", "率", "%"])), "rev_last_12": v(get_col(f"{last_y}M12", "營收", ex=["增", "率", "%"])),
-                    "rev_this_1": v(get_col(f"{this_y}M01", "營收", ex=["增", "率", "%"])), "rev_this_2": v(get_col(f"{this_y}M02", "營收", ex=["增", "率", "%"])), "rev_this_3": v(get_col(f"{this_y}M03", "營收", ex=["增", "率", "%"])),
-                    "base_q_eps": base_eps, "non_op": v(get_col("業外損益")), "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
-                    # 🌟 讀取實際 Q1 EPS 欄位，啟動 A+F 真實滾動
+                    "rev_last_10": v(get_col(f"{last_y}M10", "營收", ex=["增", "率", "%"])), 
+                    "rev_last_11": v(get_col(f"{last_y}M11", "營收", ex=["增", "率", "%"])), 
+                    "rev_last_12": v(get_col(f"{last_y}M12", "營收", ex=["增", "率", "%"])),
+                    "rev_this_1": v(get_col(f"{this_y}M01", "營收", ex=["增", "率", "%"])), 
+                    "rev_this_2": v(get_col(f"{this_y}M02", "營收", ex=["增", "率", "%"])), 
+                    "rev_this_3": v(get_col(f"{this_y}M03", "營收", ex=["增", "率", "%"])),
+                    "base_q_eps": base_eps, 
+                    "non_op_ratio": non_op_ratio, 
+                    "non_op_calc_str": calc_str, 
+                    "base_q_avg_rev": rev_q4 / 3 if rev_q4 > 0 else 0,
                     "actual_q1_eps": v(get_col("今年Q1盈餘", ex=["增"]) or get_col("本年Q1盈餘", ex=["增"]) or get_col("最新Q1EPS", ex=["增"])),
                     "ly_q1_rev": v(get_col(f"{ly}Q1", "營收", ex=["增", "%"])), "ly_q2_rev": v(get_col(f"{ly}Q2", "營收", ex=["增", "%"])), "ly_q3_rev": rev_q3, "ly_q4_rev": rev_q4,
                     "y1_q1_rev": v(get_col(f"{y1}Q1", "營收", ex=["增", "%"])), "y1_q2_rev": v(get_col(f"{y1}Q2", "營收", ex=["增", "%"])), "y1_q3_rev": v(get_col(f"{y1}Q3", "營收", ex=["增", "%"])), "y1_q4_rev": v(get_col(f"{y1}Q4", "營收", ex=["增", "%"])),
                     "eps_q1": v(get_col(f"{ly}Q1", "盈餘")), "eps_q2": v(get_col(f"{ly}Q2", "盈餘")), "eps_q3": eps_q3, "eps_q4": eps_q4,
                     "pbr": v(get_col("PBR") or get_col("淨值比")), "div_years": v(get_col("連配次數") or get_col("連續配發")),
                     "orig_per": v(get_col("PER", ex=["前瞻", "預估"])), "annual_yield": v(get_col("年化合計殖利率") or get_col("年化", "殖利率")),
-                    "payout": v(get_col("分配率")), "price": v(get_col("成交", ex=["量", "值", "比"])), "acc_eps": v(get_col("累季", "盈餘")),
+                    "payout": v(get_col("分配率")), "price": v(get_col("成交", ex=["量", "值", "比"]) or get_col("股價", ex=["比", "淨值"])), "acc_eps": v(get_col("累季", "盈餘")),
                     "contract_liab": v(get_col("合約負債", ex=["季增"])), "contract_liab_qoq": v(get_col("合約負債季增") or get_col("季增", "負債")), "declared_div": v(get_col("合計股利"))
                 }
+
+                if code not in db:
+                    db[code] = new_entry
+                else:
+                    for k, val in new_entry.items():
+                        if val and val not in [0, 0.0, "", "未知", "未分類"]:
+                            db[code][k] = val
+
             return db
         return {"general": parse_df(df_general), "finance": parse_df(df_finance)}
     except Exception as e: return {"error": str(e)}
@@ -419,7 +504,6 @@ if is_admin:
                     res_tpex = []
                     st.warning(f"⚠️ 櫃買中心(上櫃)連線超時，略過更新。錯誤: {e}")
 
-                # 🛡️ 股價專屬防護罩：遇到 '-' 或 '---' 聰明過濾，不再當機！
                 def safe_parse_price(val):
                     try:
                         s = str(val).replace(',', '').strip()
@@ -444,7 +528,7 @@ if is_admin:
                     status.update(label="⚠️ 無法取得報價 (API皆無回應)。", state="error")
                 else:
                     worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
-                    target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                    target_sheets = [ws for ws in worksheets if any(n in ws.title for n in ["當年度表", "個股總表", "總表", "金融股"])]
                     cnt = 0
                     for ws in target_sheets:
                         data = ws.get_all_values()
@@ -486,7 +570,7 @@ if is_admin:
         with st.status(f"鎖定目標欄位【{auto_ym}】...", expanded=True) as status:
             try:
                 worksheets = get_gspread_client().open_by_url(MASTER_GSHEET_URL).worksheets()
-                target_sheets = [ws for ws in worksheets if "個股總表" in ws.title or "金融股" in ws.title]
+                target_sheets = [ws for ws in worksheets if any(n in ws.title for n in ["當年度表", "個股總表", "總表", "金融股"])]
                 if not target_sheets: status.update(label="任務失敗：找不到分頁", state="error")
                 else:
                     tm_h = auto_ym.strip().upper()
@@ -570,9 +654,9 @@ def render_dataframe(df_source, is_finance=False, is_single=False):
             df = df.drop_duplicates(subset=["股票名稱"], keep='first')
         
         if is_finance:
-            cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "配息基準", "當季預估均營收(億)"]
+            cols = ["股票名稱", "最新股價", "PBR(股價淨值比)", "前瞻殖利率(%)", "年化殖利率(%)", "前瞻PER", "原始PER", "連續配息次數", "預估今年Q1_EPS", "預估今年度_EPS", "運算配息率(%)", "配息基準", "最新業外佔比(%)", "當季預估均營收(億)"]
         else:
-            cols = ["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "配息基準", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]
+            cols = ["股票名稱", "最新股價", "當季預估均營收", "季成長率(YoY)%", "前瞻殖利率(%)", "預估今年Q1_EPS", "預估今年度_EPS", "最新累季EPS", "本益比(PER)", "預估年成長率(%)", "運算配息率(%)", "最新業外佔比(%)", "配息基準", "最新季度流動合約負債(億)", "最新季度流動合約負債季增(%)"]
             
         df = df[[c for c in cols if c in df.columns]]
         
@@ -642,8 +726,8 @@ if cached_data:
                         found += 1
                         bar.progress((i+1)/len(vips), f"分析: {code}")
                         pr = get_realtime_price(code, d["price"])
-                        # 🌟 將 actual_q1_eps 送入模型！
-                        res_list.append(auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), pr, d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0), d.get("actual_q1_eps",0)))
+                        # 🌟 帶入所有完整資料
+                        res_list.append(auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_10",0), d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op_ratio",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), pr, d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0), d.get("actual_q1_eps",0)))
                 bar.empty()
                 if not found: st.warning("未找到股票")
                 elif res_list: st.session_state["df_vip"] = pd.DataFrame(res_list)
@@ -688,6 +772,10 @@ if cached_data:
                                 safe_per = get_safe_float(row.get('本益比(PER)', 0))
                                 safe_eps = get_safe_float(row.get('預估今年度_EPS', 0))
                                 safe_grow = get_safe_float(row.get('預估年成長率(%)', 0))
+                                safe_non_op = get_safe_float(row.get('最新業外佔比(%)', 0))
+                                
+                                db_data = db_gen.get(sel.split(" ")[0])
+                                calc_str = db_data.get("non_op_calc_str", "") if db_data else "無計算資料"
                                 
                                 st.markdown(
                                     f"股價 {safe_price:.2f}元 ｜ "
@@ -695,6 +783,7 @@ if cached_data:
                                     f"PER {safe_per:.2f} ｜ "
                                     f"EPS {safe_eps:.2f}元 ｜ "
                                     f"成長率 {safe_grow:.2f}% ｜ "
+                                    f"📉 業外佔比 {safe_non_op:.2f}% <span style='font-size:0.8em; color:gray;'>(公式: {calc_str})</span><br>"
                                     f"📈 合約負債 {liab_value:.2f}億 ({liab_qoq:.2f}%)",
                                     unsafe_allow_html=True
                                 )
@@ -779,7 +868,7 @@ if cached_data:
                         if code in exclude_codes: continue
                         if kws and any((k in d["name"] or code.startswith(k)) for k in kws): continue
                         
-                        r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0), d.get("actual_q1_eps",0))
+                        r = auto_strategic_model(f"{code} {d['name']}", simulated_month, d.get("rev_last_10",0), d.get("rev_last_11",0), d.get("rev_last_12",0), d.get("rev_this_1",0), d.get("rev_this_2",0), d.get("rev_this_3",0), d["base_q_eps"], d.get("non_op_ratio",0), d["base_q_avg_rev"], d["ly_q1_rev"], d["ly_q2_rev"], d["ly_q3_rev"], d["ly_q4_rev"], d["y1_q1_rev"], d["y1_q2_rev"], d["y1_q3_rev"], d["y1_q4_rev"], d.get("payout",0), d["price"], d.get("contract_liab",0), d.get("contract_liab_qoq",0), d.get("acc_eps",0), d.get("declared_div",0), d.get("actual_q1_eps",0))
                         
                         ly_q1_avg, ly_q2 = r["_ly_qs"][0]/3, r["_ly_qs"][1]
                         ly_11_12_avg = r["_total_est_qs"][0]/3 
