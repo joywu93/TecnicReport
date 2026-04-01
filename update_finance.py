@@ -49,7 +49,7 @@ def fetch_and_update():
     try:
         print("📡 任務一：下載最新【綜合損益表】...")
         res_twse = requests.get(url_twse, headers=headers, verify=False, timeout=30).json()
-        res_tpex = requests.get(url_tpex, headers=headers, verify=False, timeout=30).json()
+        res_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", verify=False, timeout=30).json()
         all_detail = res_twse + res_tpex
     except Exception as e: 
         print(f"❌ API 抓取失敗: {e}")
